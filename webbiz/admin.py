@@ -7,18 +7,20 @@ Runs on your own machine. To expose it beyond localhost, set ADMIN_PASSWORD and 
 import base64
 import contextlib
 import hmac
+import imaplib
 import json
 import mimetypes
 import os
 import re
-import subprocess
+import smtplib
 import threading
 import traceback
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import config, db, outreach, prospect, sitegen
+from . import config, db, outreach, prospect, publish, sitegen
 
 PAGE = Path(__file__).parent / "templates" / "admin.html"
 LEAD_FIELDS = ("name", "email", "category", "phone", "address", "city", "opening_hours", "notes")
@@ -53,7 +55,8 @@ class App:
             "sent_today": outreach.sent_today(conn), "daily_limit": self.cfg["daily_send_limit"],
             "queue": len(outreach.queue(conn, self.cfg)), "recent": recent,
             "ready": outreach.check_ready(self.cfg), "imap": bool(self.cfg["imap"]["host"]),
-            "business_name": self.cfg["business_name"], "publish": bool(self.cfg["publish_command"]),
+            "business_name": self.cfg["business_name"], "publish": publish.can_publish(self.cfg),
+            "configured": self.cfg["configured"],
         }
 
     def leads(self, conn, q):
@@ -164,14 +167,7 @@ class App:
                 built = sitegen.build(conn, self.cfg, self.sites_dir, rebuild=bool(body.get("rebuild")))
                 log(f"Built {len(built)} site(s).")
             elif name == "publish":
-                if not self.cfg["publish_command"]:
-                    raise ValueError("Set publish_command in config.json first (see README).")
-                res = subprocess.run(self.cfg["publish_command"], shell=True, cwd=config.ROOT,
-                                     capture_output=True, text=True, timeout=900)
-                log((res.stdout + res.stderr)[-6000:])
-                if res.returncode:
-                    raise RuntimeError(f"publish_command failed (exit {res.returncode})")
-                log("Published.")
+                publish.publish(self.cfg, self.sites_dir, log=log)
             elif name == "send":
                 limit = int(body["limit"]) if body.get("limit") else None
                 outreach.send(conn, self.cfg, live=bool(body.get("live")), limit=limit, log=log)
@@ -186,6 +182,94 @@ class App:
             conn.close()
             job["running"] = False
 
+    # ---- Settings -----------------------------------------------------------------------
+    SETTINGS = ("business_name", "your_name", "reply_to_email", "phone", "postal_address", "preview_base_url",
+                "price_setup", "price_monthly", "daily_send_limit", "followup_after_days", "max_emails_per_lead")
+    NUMBERS = {"price_setup": (0, 100000), "price_monthly": (0, 10000), "daily_send_limit": (1, 500),
+               "followup_after_days": (1, 60), "max_emails_per_lead": (1, 2)}
+
+    def settings(self):
+        smtp, imap = self.cfg["smtp"], self.cfg["imap"]
+        return {
+            "settings": {k: self.cfg[k] for k in self.SETTINGS},
+            "email": {"smtp_host": smtp["host"], "smtp_port": smtp["port"], "smtp_user": smtp["user"],
+                      "imap_host": imap["host"], "has_password": bool(smtp["password"])},
+            "netlify": {"has_token": bool(self.cfg["netlify_token"]), "site_id": self.cfg["netlify_site_id"]},
+            "configured": self.cfg["configured"], "ready": outreach.check_ready(self.cfg),
+            "steps": {
+                "business": bool(self.cfg["configured"] and self.cfg["postal_address"]
+                                 and "example.com" not in self.cfg["reply_to_email"]),
+                "email": all(smtp[k] for k in ("host", "user", "password")),
+                "hosting": bool(self.cfg["preview_base_url"]),
+                "prices": bool(self.cfg["configured"]),
+            },
+        }
+
+    def _reload(self):
+        fresh = config.load()
+        # Keep paths from startup (e.g. the separate demo database).
+        self.cfg.update({k: v for k, v in fresh.items() if k not in ("db_path", "sites_dir")})
+
+    def save_settings(self, body):
+        values = {}
+        for key, value in (body.get("settings") or {}).items():
+            if key not in self.SETTINGS:
+                continue
+            if key in self.NUMBERS:
+                lo, hi = self.NUMBERS[key]
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    raise ValueError(f"{key.replace('_', ' ')} must be a whole number") from None
+                if not lo <= value <= hi:
+                    raise ValueError(f"{key.replace('_', ' ')} must be between {lo} and {hi}")
+            else:
+                value = str(value).strip()
+                if not value and key in ("business_name", "your_name", "reply_to_email"):
+                    continue  # not filled in yet: keep the current value
+            values[key] = value
+        if values.get("reply_to_email") and "@" not in values["reply_to_email"]:
+            raise ValueError("Enter a valid email address.")
+        if "preview_base_url" in values:
+            values["preview_base_url"] = values["preview_base_url"].rstrip("/")
+        secrets = {}
+        email = body.get("email") or {}
+        mapping = {"smtp_host": "SMTP_HOST", "smtp_port": "SMTP_PORT", "smtp_user": "SMTP_USER", "imap_host": "IMAP_HOST"}
+        for field, key in mapping.items():
+            if field in email:
+                secrets[key] = str(email[field]).strip()
+        if email.get("password"):  # blank = keep the saved one
+            secrets["SMTP_PASS"] = email["password"].replace(" ", "")  # Gmail shows app passwords in groups
+        if "smtp_user" in email:
+            secrets["SMTP_FROM"] = values.get("reply_to_email") or self.cfg["reply_to_email"]
+        if (body.get("netlify") or {}).get("token"):
+            secrets["NETLIFY_TOKEN"] = body["netlify"]["token"].strip()
+        config.save(values or {"business_name": self.cfg["business_name"]}, secrets)
+        self._reload()
+        return self.settings()
+
+    def settings_action(self, name):
+        try:
+            if name == "test-email":
+                if outreach.check_ready(self.cfg, for_outreach=False):
+                    raise ValueError("Fill in your email account details and save first.")
+                return {"message": f"Test email sent to {outreach.test_smtp(self.cfg)} — check your inbox."}
+            if name == "test-inbox":
+                if not (self.cfg["imap"]["host"] and self.cfg["imap"]["password"]):
+                    raise ValueError("Fill in your email account details and save first.")
+                return {"message": f"Inbox connected ({outreach.test_imap(self.cfg)} messages)."}
+            if name == "connect-netlify":
+                if not self.cfg["netlify_token"]:
+                    raise ValueError("Paste your Netlify token and save first.")
+                url = publish.connect_netlify(self.cfg, self.cfg["business_name"])
+                return {"message": f"Connected! Previews will be published at {url}/", "url": url}
+        except (smtplib.SMTPAuthenticationError, imaplib.IMAP4.error):
+            raise ValueError("Login failed. For Gmail, use an App Password (not your normal password) "
+                             "— see the link in the Email section.") from None
+        except (OSError, smtplib.SMTPException) as exc:
+            raise ValueError(f"Couldn't connect: {exc}") from None
+        raise LookupError("unknown settings action")
+
     # ---- Routing ------------------------------------------------------------------------
     def route(self, method, path, query, body):
         with contextlib.closing(self.conn()) as conn:
@@ -196,6 +280,8 @@ class App:
                     return self.leads(conn, query)
                 if path == "/api/job":
                     return self.job_status()
+                if path == "/api/settings":
+                    return self.settings()
                 if path == "/api/mailbox":
                     return self.mailbox(conn, query)
                 if m := re.fullmatch(r"/api/leads/(\d+)", path):
@@ -209,6 +295,10 @@ class App:
                             "optout": lambda: self.optout(conn, lead_id)}[m[2]]()
                 if m := re.fullmatch(r"/api/actions/(\w+)", path):
                     return self.start_action(m[1], body)
+                if path == "/api/settings":
+                    return self.save_settings(body)
+                if m := re.fullmatch(r"/api/settings/([\w-]+)", path):
+                    return self.settings_action(m[1])
         raise LookupError("not found")
 
     def final_site(self, lead_id):
@@ -310,13 +400,24 @@ def make_handler(app):
     return Handler
 
 
-def serve(cfg, host="127.0.0.1", port=8080):
+def serve(cfg, host="127.0.0.1", port=8080, open_browser=False):
     password = os.environ.get("ADMIN_PASSWORD", "")
     if host not in ("127.0.0.1", "localhost", "::1") and not password:
         raise SystemExit("Set ADMIN_PASSWORD before exposing the admin beyond localhost.")
     app = App(cfg, password)
-    httpd = ThreadingHTTPServer((host, port), make_handler(app))
-    print(f"webbiz admin running at http://{host}:{port}  (Ctrl+C to stop)")
+    for candidate in range(port, port + 20):  # skip ports already in use
+        try:
+            httpd = ThreadingHTTPServer((host, candidate), make_handler(app))
+            port = candidate
+            break
+        except OSError:
+            continue
+    else:
+        raise SystemExit(f"Ports {port}-{port + 19} are all in use.")
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
+    print(f"webbiz admin running at {url}  (leave this window open; Ctrl+C to stop)")
+    if open_browser:
+        threading.Timer(0.8, webbrowser.open, args=(url,)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

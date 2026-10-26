@@ -14,17 +14,9 @@
   python -m webbiz admin [--demo]                      dashboard at http://127.0.0.1:8080
 """
 import argparse
-import subprocess
 import sys
 
-from . import config, db, importer, outreach, prospect, sitegen
-
-
-def publish(cfg):
-    if not cfg["publish_command"]:
-        raise SystemExit("Set publish_command in config.json (see README for Netlify / GitHub Pages examples).")
-    print(f"Publishing: {cfg['publish_command']}")
-    subprocess.run(cfg["publish_command"], shell=True, check=True, cwd=config.ROOT)
+from . import config, db, importer, outreach, prospect, publish, sitegen
 
 
 def main(argv=None):
@@ -48,7 +40,7 @@ def main(argv=None):
     s.add_argument("--limit", type=int)
 
     sub.add_parser("sync", help="check inbox for replies, opt-outs and bounces")
-    sub.add_parser("publish", help="run publish_command from config.json to upload output/sites")
+    sub.add_parser("publish", help="upload output/sites (Netlify from Settings, or publish_command)")
 
     r = sub.add_parser("run", help="find + build + send")
     r.add_argument("area", nargs="?", help="skip to build+send if omitted")
@@ -72,6 +64,7 @@ def main(argv=None):
     a.add_argument("--host", default="127.0.0.1")
     a.add_argument("--port", type=int, default=8080)
     a.add_argument("--demo", action="store_true", help="explore with sample data (separate demo database)")
+    a.add_argument("--open", action="store_true", help="open the dashboard in your browser")
 
     args = p.parse_args(argv)
     cfg = config.load(args.config)
@@ -92,7 +85,10 @@ def main(argv=None):
     elif args.cmd == "send":
         outreach.send(conn, cfg, live=args.live, limit=args.limit, outbox=outbox)
     elif args.cmd == "publish":
-        publish(cfg)
+        try:
+            publish.publish(cfg, sites_dir)
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(str(exc))
     elif args.cmd == "sync":
         outreach.sync_replies(conn, cfg)
     elif args.cmd == "run":
@@ -103,11 +99,11 @@ def main(argv=None):
         built = sitegen.build(conn, cfg, sites_dir)
         print(f"Built {len(built)} preview site(s) in {sites_dir}")
         skip = []
-        if built and cfg["publish_command"]:
-            publish(cfg)
+        if built and publish.can_publish(cfg):
+            publish.publish(cfg, sites_dir)
         elif built and args.live:
             # Don't email a link that isn't online yet; they'll go out on the next run.
-            print("No publish_command configured, so new sites will be emailed on the next run "
+            print("Publishing isn't set up, so new sites will be emailed on the next run "
                   "once you've published output/sites.")
             skip = built
         outreach.send(conn, cfg, live=args.live, limit=args.limit, outbox=outbox, skip_ids=skip)
@@ -129,7 +125,7 @@ def main(argv=None):
         if args.demo:
             from . import demo
             demo.seed(conn, cfg, sites_dir)
-        admin.serve(cfg, args.host, args.port)
+        admin.serve(cfg, args.host, args.port, open_browser=args.open)
     elif args.cmd == "stats":
         for row in conn.execute("SELECT status, COUNT(*) n FROM leads GROUP BY status ORDER BY n DESC"):
             print(f"{row['status']:<11} {row['n']}")

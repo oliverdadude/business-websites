@@ -13,7 +13,7 @@ from string import Template
 from . import hours as hours_mod
 from .themes import FONTS, icon, theme_for as _theme_for
 
-TEMPLATE = Template((Path(__file__).parent / "templates" / "site.html").read_text())
+TEMPLATE = Template((Path(__file__).parent / "templates" / "site.html").read_text(encoding="utf-8"))
 
 SERVICES_COPY = {
     "food": ("Something for everyone", "Whether you're stopping by for a quick bite or a proper sit-down, we've got you covered."),
@@ -142,6 +142,7 @@ def render(lead, cfg, final=False):
         body_font=body_font,
         schema=json.dumps(schema).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"),
         preview_bar=preview_bar,
+        robots_meta="" if final else '\n<meta name="robots" content="noindex">',
         name=e(name),
         initial=e(name[:1].upper()),
         eyebrow=e(" · ".join(filter(None, [category, city])) or "Locally owned"),

@@ -17,6 +17,28 @@ An automated pipeline for a small web-design business:
 Business side: see [`business/offer-and-pricing.md`](business/offer-and-pricing.md) and
 [`business/playbook.md`](business/playbook.md).
 
+## Quick start (no coding needed)
+
+1. **Install Python 3** from [python.org/downloads](https://www.python.org/downloads/).
+   On Windows, tick **“Add python.exe to PATH”** in the installer.
+2. **Download this project.** On GitHub, click **Code → Download ZIP**, then unzip it
+   somewhere easy to find, like Documents.
+3. **Double-click the start file:**
+   - Mac: **`Start webbiz (Mac).command`**. The first time, macOS may block it: right-click
+     it, choose **Open**, then confirm.
+   - Windows: **`Start webbiz (Windows).bat`**. If Windows shows “Windows protected your PC”,
+     click **More info → Run anyway**.
+4. Your browser opens the dashboard on the **Settings** page. Fill in the four steps and use
+   the test buttons as you go:
+   - **Your business:** name, email, and a postal address (a PO box is fine).
+   - **Email account:** for Gmail, create an App Password; the page shows you how.
+   - **Website hosting:** make a free Netlify account and paste a token. webbiz does the rest.
+   - **Prices & limits:** the defaults are fine to start with.
+5. Go to the **Dashboard**, type a town, and click **Find**, then **Build**, **Publish**,
+   **Preview** and **Send live**.
+
+Keep the black terminal window open while you use the dashboard. Closing it stops the program.
+
 ## Admin dashboard
 
 ```bash
@@ -55,7 +77,7 @@ run `python -m webbiz build --rebuild` to regenerate existing sites.
 
 Pure Python 3.10+ standard library — nothing to install.
 
-## Setup (10 minutes)
+## Manual setup (for developers)
 
 ```bash
 cp config.example.json config.json   # your name, studio name, address, prices, preview URL
@@ -68,7 +90,7 @@ SPF, DKIM and DMARC set up. Google Workspace or Zoho Mail work well. Keep
 `daily_send_limit` at around 30 for the first few weeks.
 
 ### Hosting the preview sites
-Previews are static files in `output/sites/<slug>/index.html`. Point `preview_base_url`
+The easiest option is the Settings page's **Connect Netlify** button. Otherwise: previews are static files in `output/sites/<slug>/index.html`. Point `preview_base_url`
 at wherever you publish that folder, and optionally set `publish_command` so `run` uploads
 new sites automatically before emailing:
 

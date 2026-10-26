@@ -12,6 +12,7 @@ DEFAULTS = {
     "postal_address": "",
     "preview_base_url": "",
     "publish_command": "",
+    "netlify_site_id": "",
     "price_setup": 299,
     "price_monthly": 29,
     "daily_send_limit": 30,
@@ -24,26 +25,72 @@ DEFAULTS = {
     "sites_dir": "output/sites",
 }
 
+# Secrets live in .env (or real environment variables, which take precedence), never in config.json.
+SECRET_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM",
+               "IMAP_HOST", "IMAP_USER", "IMAP_PASS", "NETLIFY_TOKEN")
+
+
+def read_env_file(path=None):
+    path = Path(path or ROOT / ".env")
+    values = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
 
 def load(path=None):
     path = Path(path or ROOT / "config.json")
     cfg = dict(DEFAULTS)
     if path.exists():
-        cfg.update(json.loads(path.read_text()))
-    # SMTP/IMAP secrets come from the environment only, never from the config file.
+        cfg.update(json.loads(path.read_text(encoding="utf-8")))
+    file_env = read_env_file(path.parent / ".env")
+    env = lambda key, default="": os.environ.get(key) or file_env.get(key) or default
     cfg["smtp"] = {
-        "host": os.environ.get("SMTP_HOST", ""),
-        "port": int(os.environ.get("SMTP_PORT", "587")),
-        "user": os.environ.get("SMTP_USER", ""),
-        "password": os.environ.get("SMTP_PASS", ""),
-        "from_email": os.environ.get("SMTP_FROM", cfg["reply_to_email"]),
+        "host": env("SMTP_HOST"),
+        "port": int(env("SMTP_PORT", "587")),
+        "user": env("SMTP_USER"),
+        "password": env("SMTP_PASS"),
+        "from_email": env("SMTP_FROM", cfg["reply_to_email"]),
     }
     cfg["imap"] = {
-        "host": os.environ.get("IMAP_HOST", ""),
-        "user": os.environ.get("IMAP_USER", os.environ.get("SMTP_USER", "")),
-        "password": os.environ.get("IMAP_PASS", os.environ.get("SMTP_PASS", "")),
+        "host": env("IMAP_HOST"),
+        "user": env("IMAP_USER", env("SMTP_USER")),
+        "password": env("IMAP_PASS", env("SMTP_PASS")),
     }
+    cfg["netlify_token"] = env("NETLIFY_TOKEN")
+    cfg["configured"] = path.exists()
     return cfg
+
+
+def save(settings=None, secrets=None):
+    """Merge settings into config.json and secrets into .env (private to the user's account)."""
+    if settings:
+        path = ROOT / "config.json"
+        current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        current.update({k: v for k, v in settings.items() if k in DEFAULTS})
+        path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    if secrets:
+        for key, value in secrets.items():
+            if key not in SECRET_KEYS or "\n" in str(value):
+                raise ValueError(f"invalid setting {key}")
+        env_path = ROOT / ".env"
+        values = read_env_file(env_path)
+        values.update({k: str(v) for k, v in secrets.items()})
+        env_path.write_text("".join(f"{k}={v}\n" for k, v in values.items() if v != ""), encoding="utf-8")
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass
+        # Keep this running process in step with the file.
+        for k, v in secrets.items():
+            if v == "":
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = str(v)
 
 
 def resolve(cfg, key):

@@ -11,7 +11,11 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
 
-from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, sitegen
+import io
+import os
+import zipfile
+
+from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, publish, sitegen
 
 
 def make_cfg(**over):
@@ -200,7 +204,7 @@ class OutreachTests(Base):
         self.cfg["postal_address"] = ""
         with self.assertRaises(SystemExit) as ctx:
             outreach.send(self.conn, self.cfg, live=True, log=lambda *a: None)
-        self.assertIn("postal_address", str(ctx.exception))
+        self.assertIn("postal address", str(ctx.exception))
 
     def test_classify_replies(self):
         leads = {"rosa@gmail.com": None}
@@ -353,6 +357,93 @@ class AdminTests(Base):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class SettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.patches = [mock.patch.object(config, "ROOT", root), mock.patch.dict(os.environ, {}, clear=False)]
+        for p in self.patches:
+            p.start()
+        for k in config.SECRET_KEYS:
+            os.environ.pop(k, None)
+        cfg = config.load()
+        cfg.update(db_path=str(root / "t.db"), sites_dir=str(root / "sites"))
+        self.app = admin.App(cfg)
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_first_run_then_save_everything(self):
+        d = self.app.settings()
+        self.assertFalse(d["configured"])
+        self.assertFalse(any(d["steps"].values()))
+        d = self.app.save_settings({
+            "settings": {"business_name": "Brex Web", "your_name": "", "reply_to_email": "me@gmail.com",
+                         "postal_address": "1 High St", "price_setup": "399", "evil": "x"},
+            "email": {"smtp_host": "smtp.gmail.com", "smtp_port": "587", "smtp_user": "me@gmail.com",
+                      "imap_host": "imap.gmail.com", "password": "abcd efgh ijkl mnop"}})
+        self.assertTrue(d["configured"])
+        self.assertEqual(d["steps"], {"business": True, "email": True, "hosting": False, "prices": True})
+        self.assertEqual(self.app.cfg["price_setup"], 399)
+        self.assertEqual(self.app.cfg["your_name"], "Your Name")  # blank required field left unchanged
+        self.assertEqual(self.app.cfg["smtp"]["password"], "abcdefghijklmnop")  # spaces stripped
+        self.assertEqual(self.app.cfg["imap"]["password"], "abcdefghijklmnop")
+        saved = json.loads((config.ROOT / "config.json").read_text())
+        self.assertNotIn("evil", saved)
+        self.assertNotIn("password", json.dumps(saved).lower())  # secrets only in .env
+        self.assertIn("SMTP_PASS=abcdefghijklmnop", (config.ROOT / ".env").read_text())
+        self.assertFalse(self.app.settings()["email"].get("password"))  # never sent back to the browser
+        # Saving again with a blank password keeps the stored one.
+        self.app.save_settings({"email": {"smtp_user": "me@gmail.com", "password": ""}})
+        self.assertEqual(config.load()["smtp"]["password"], "abcdefghijklmnop")
+
+    def test_validation(self):
+        with self.assertRaises(ValueError):
+            self.app.save_settings({"settings": {"daily_send_limit": "9999"}})
+        with self.assertRaises(ValueError):
+            self.app.save_settings({"settings": {"price_setup": "lots"}})
+        with self.assertRaises(ValueError):
+            config.save(secrets={"SMTP_PASS": "a\nINJECTED=1"})
+
+    def test_test_email_reports_login_failure(self):
+        self.app.save_settings({"settings": {"reply_to_email": "me@gmail.com"},
+                                "email": {"smtp_host": "smtp.gmail.com", "smtp_user": "me@gmail.com", "password": "x"}})
+        with mock.patch.object(outreach.smtplib, "SMTP") as smtp:
+            smtp.return_value.login.side_effect = outreach.smtplib.SMTPAuthenticationError(535, b"bad")
+            with self.assertRaises(ValueError) as ctx:
+                self.app.settings_action("test-email")
+        self.assertIn("App Password", str(ctx.exception))
+
+    def test_connect_netlify_and_publish(self):
+        self.app.save_settings({"settings": {"business_name": "Brex Web"}, "netlify": {"token": "tok"}})
+        site_dir = Path(self.app.sites_dir) / "rosa-1"
+        site_dir.mkdir(parents=True)
+        (site_dir / "index.html").write_text("<h1>Rosa</h1>")
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req)
+            if req.full_url.endswith("/sites") and len(calls) == 1:
+                raise urllib.error.HTTPError(req.full_url, 422, "taken", {}, io.BytesIO(b"name taken"))
+            body = {"id": "site123", "ssl_url": "https://brex-web-previews-x.netlify.app"} \
+                if req.full_url.endswith("/sites") else {"state": "uploaded"}
+            return mock.MagicMock(__enter__=lambda s: io.BytesIO(json.dumps(body).encode()), __exit__=lambda *a: None)
+
+        with mock.patch.object(publish.urllib.request, "urlopen", fake_urlopen):
+            msg = self.app.settings_action("connect-netlify")["message"]
+            publish.publish(self.app.cfg, self.app.sites_dir, log=lambda *a: None)
+        self.assertIn("netlify.app", msg)
+        self.assertEqual(self.app.cfg["preview_base_url"], "https://brex-web-previews-x.netlify.app")
+        self.assertEqual(config.load()["netlify_site_id"], "site123")
+        self.assertEqual(calls[0].get_header("Authorization"), "Bearer tok")
+        deploy = calls[-1]
+        self.assertTrue(deploy.full_url.endswith("/sites/site123/deploys"))
+        names = zipfile.ZipFile(io.BytesIO(deploy.data)).namelist()
+        self.assertEqual(sorted(names), ["index.html", "robots.txt", "rosa-1/index.html"])
 
 
 if __name__ == "__main__":

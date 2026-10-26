@@ -124,14 +124,14 @@ def check_ready(cfg, for_outreach=True):
     problems = []
     if for_outreach:
         if not cfg["postal_address"]:
-            problems.append("set postal_address in config.json (required by anti-spam law)")
+            problems.append("Add your postal address — required by anti-spam law (Settings → Your business)")
         if not cfg["preview_base_url"]:
-            problems.append("set preview_base_url in config.json and publish output/sites there (see README)")
+            problems.append("Connect website hosting so preview links work (Settings → Website hosting)")
     if "example.com" in cfg["reply_to_email"]:
-        problems.append("set reply_to_email in config.json")
-    for k in ("host", "user", "password"):
-        if not cfg["smtp"][k]:
-            problems.append(f"set SMTP_{k.upper() if k != 'password' else 'PASS'} environment variable")
+        problems.append("Add your business email (Settings → Your business)")
+    if not all(cfg["smtp"][k] for k in ("host", "user", "password")):
+        problems.append("Connect your email account (Settings → Email account, or SMTP_HOST / SMTP_USER / "
+                        "SMTP_PASS in .env)")
     return problems
 
 
@@ -140,6 +140,29 @@ def _smtp(cfg):
     smtp.starttls()
     smtp.login(cfg["smtp"]["user"], cfg["smtp"]["password"])
     return smtp
+
+
+def test_smtp(cfg):
+    """Send a test email to yourself. Raises with a readable message on failure."""
+    msg = EmailMessage()
+    msg["Subject"] = "webbiz test email"
+    msg["From"] = f"{cfg['your_name']} <{cfg['smtp']['from_email']}>"
+    msg["To"] = cfg["reply_to_email"]
+    msg.set_content("It works! webbiz can send email from this account.")
+    smtp = _smtp(cfg)
+    try:
+        smtp.send_message(msg)
+    finally:
+        smtp.quit()
+    return cfg["reply_to_email"]
+
+
+def test_imap(cfg):
+    """Log in to the inbox and count messages."""
+    with imaplib.IMAP4_SSL(cfg["imap"]["host"]) as box:
+        box.login(cfg["imap"]["user"], cfg["imap"]["password"])
+        _, data = box.select("INBOX", readonly=True)
+        return int(data[0])
 
 
 def _record_sent(conn, lead_id, kind, msg):
