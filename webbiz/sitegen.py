@@ -1,75 +1,47 @@
-"""Generate a one-page preview website for a lead.
+"""Generate a one-page website for a lead.
 
 The preview is the pitch: the owner opens the email and sees their own business
 already online. Pages are single self-contained HTML files, ready for any static host.
 """
 import html
+import json
 import re
 import urllib.parse
 from pathlib import Path
 from string import Template
 
+from . import hours as hours_mod
+from .themes import FONTS, icon, theme_for as _theme_for
+
 TEMPLATE = Template((Path(__file__).parent / "templates" / "site.html").read_text())
 
-# (match on category value) -> theme
-THEMES = [
-    (("restaurant", "cafe", "bakery", "fast_food", "bar", "pub", "ice_cream", "deli", "butcher",
-      "confectionery", "pastry", "food", "coffee", "biergarten"),
-     {"accent": "#c2410c", "accent2": "#fde68a", "kind": "food",
-      "tagline": "Fresh, local and made with care.",
-      "services": ["Dine in", "Takeaway", "Catering & events"],
-      "cta": "Call to order"}),
-    (("hairdresser", "beauty", "nails", "massage", "cosmetics", "tattoo", "barber", "spa"),
-     {"accent": "#be185d", "accent2": "#fbcfe8", "kind": "beauty",
-      "tagline": "Look good. Feel better.",
-      "services": ["Cuts & styling", "Treatments", "Walk-ins welcome"],
-      "cta": "Book an appointment"}),
-    (("plumber", "electrician", "carpenter", "builder", "roofer", "painter", "hvac", "locksmith",
-      "gardener", "handicraft", "tiler", "glaziery", "stonemason", "craft", "hardware", "doityourself"),
-     {"accent": "#1d4ed8", "accent2": "#bfdbfe", "kind": "trades",
-      "tagline": "Reliable local work, done right the first time.",
-      "services": ["Free quotes", "Repairs & installs", "Emergency call-outs"],
-      "cta": "Get a free quote"}),
-    (("dentist", "doctor", "doctors", "clinic", "pharmacy", "physiotherapist", "optician",
-      "veterinary", "healthcare", "chemist", "medical", "psychotherapist"),
-     {"accent": "#0f766e", "accent2": "#99f6e4", "kind": "health",
-      "tagline": "Friendly, professional care close to home.",
-      "services": ["New patients welcome", "Appointments", "Personal care"],
-      "cta": "Make an appointment"}),
-    (("car_repair", "car", "tyres", "motorcycle", "car_wash", "fuel", "bicycle"),
-     {"accent": "#b91c1c", "accent2": "#fecaca", "kind": "auto",
-      "tagline": "Keeping you on the road.",
-      "services": ["Servicing", "Repairs", "Honest pricing"],
-      "cta": "Book a service"}),
-    (("fitness", "sports_centre", "gym", "yoga", "dance", "sports"),
-     {"accent": "#7c3aed", "accent2": "#ddd6fe", "kind": "fitness",
-      "tagline": "Stronger every week.",
-      "services": ["Classes", "Personal training", "Memberships"],
-      "cta": "Try a free session"}),
-    (("hotel", "guest_house", "hostel", "apartment", "camp_site", "motel", "bed_and_breakfast"),
-     {"accent": "#0369a1", "accent2": "#bae6fd", "kind": "stay",
-      "tagline": "Your home away from home.",
-      "services": ["Comfortable rooms", "Great location", "Warm welcome"],
-      "cta": "Check availability"}),
-    (("accountant", "lawyer", "estate_agent", "insurance", "consulting", "financial", "tax_advisor",
-      "architect", "notary"),
-     {"accent": "#334155", "accent2": "#cbd5e1", "kind": "professional",
-      "tagline": "Expert advice you can trust.",
-      "services": ["Free consultation", "Personal service", "Local experience"],
-      "cta": "Book a consultation"}),
-]
-DEFAULT_THEME = {"accent": "#047857", "accent2": "#a7f3d0", "kind": "shop",
-                 "tagline": "Proudly serving our local community.",
-                 "services": ["Friendly service", "Quality you can trust", "Locally owned"],
-                 "cta": "Get in touch"}
+SERVICES_COPY = {
+    "food": ("Something for everyone", "Whether you're stopping by for a quick bite or a proper sit-down, we've got you covered."),
+    "beauty": ("Our treatments", "A full range of services in a relaxed, welcoming space."),
+    "trades": ("How we can help", "From small fixes to bigger projects — one call and we'll take it from there."),
+    "health": ("How we can help", "Professional, personal care for you and your family."),
+    "auto": ("Our services", "Everything your vehicle needs, under one roof."),
+    "fitness": ("Train with us", "Find the session that suits you and your goals."),
+    "stay": ("Your stay", "Everything you need for a relaxing visit."),
+    "professional": ("Our services", "Practical expertise, delivered personally."),
+    "shop": ("Why visit us", "Friendly, independent and here to help."),
+}
+CTA_HEADINGS = {
+    "food": "Hungry? We'd love to see you.",
+    "beauty": "Treat yourself — book your visit.",
+    "trades": "Need a job done? Get your free quote.",
+    "health": "Ready to book your appointment?",
+    "auto": "Book your vehicle in today.",
+    "fitness": "Your first step starts here.",
+    "stay": "Plan your stay with us.",
+    "professional": "Let's talk about how we can help.",
+    "shop": "We'd love to hear from you.",
+}
 
 
 def theme_for(category):
-    value = category.split("=", 1)[-1].lower()
-    for keys, theme in THEMES:
-        if any(k in value for k in keys):
-            return theme
-    return DEFAULT_THEME
+    kind, theme = _theme_for(category)
+    return dict(theme, kind=kind)
 
 
 def slugify(text):
@@ -77,43 +49,122 @@ def slugify(text):
 
 
 def nice_category(category):
-    return category.split("=", 1)[-1].replace("_", " ").replace(";", ", ").title() if category else ""
+    value = (category or "").split("=", 1)[-1].split(";")[0]
+    return value.replace("_", " ").strip().capitalize()
 
 
-def render(lead, cfg):
+def _li(icon_name, label, value_html):
+    return (f'<li><span class="ic">{icon(icon_name, 20)}</span>'
+            f'<span><small>{label}</small>{value_html}</span></li>')
+
+
+def render(lead, cfg, final=False):
+    """Render a lead's site. final=True drops the "free preview" notice (for delivery)."""
     e = lambda s: html.escape(str(s or ""), quote=True)
-    theme = theme_for(lead["category"] or "")
-    name = lead["name"]
-    location = lead["city"] or ""
-    services = "".join(f"<li>{e(s)}</li>" for s in theme["services"])
-    phone_digits = re.sub(r"[^\d+]", "", lead["phone"] or "")
+    lead = dict(lead)
+    theme = theme_for(lead.get("category"))
+    kind = theme["kind"]
+    # accent_text: a readable-on-white shade for themes whose accent is light (yellow, lime).
+    c = {"accent_text": theme["colors"]["accent"], **theme["colors"]}
+    display_font, body_font, font_query = FONTS[theme["fonts"]]
+    name, city = lead["name"].strip(), (lead.get("city") or "").strip()
+    category = nice_category(lead.get("category"))
+    in_city = f" in {city}" if city else ""
+
+    phone = (lead.get("phone") or "").split(";")[0].strip()
+    phone_digits = re.sub(r"[^\d+]", "", phone)
+    email = lead["email"]
+    address = (lead.get("address") or "").strip()
     if phone_digits:
-        cta_href, contact_phone = f"tel:{phone_digits}", f'<h3>Phone</h3><p><a href="tel:{phone_digits}">{e(lead["phone"])}</a></p>'
+        cta_href, cta, cta_short, cta_icon = f"tel:{phone_digits}", theme["cta"], "Call us", icon("phone", 18)
     else:
-        cta_href, contact_phone = f"mailto:{lead['email']}", ""
-    map_q = urllib.parse.quote_plus(lead["address"] or f"{name} {location}")
-    hours = lead["opening_hours"] or ""
-    hours_html = (f"<h3>Opening hours</h3><p>{e(hours).replace(';', '<br>')}</p>" if hours else "")
+        cta_href, cta, cta_short, cta_icon = f"mailto:{email}", "Email us", "Email us", icon("mail", 18)
+
+    contact = []
+    if phone_digits:
+        contact.append(_li("phone", "Phone", f'<a href="tel:{e(phone_digits)}">{e(phone)}</a>'))
+    contact.append(_li("mail", "Email", f'<a href="mailto:{e(email)}">{e(email)}</a>'))
+    if address or city:
+        contact.append(_li("map-pin", "Address", f'<a href="#visit">{e(address or city)}</a>'))
+
+    week = hours_mod.parse(lead.get("opening_hours"))
+    if week:
+        rows = "".join(f'<tr data-day="{i}"><td>{d}</td><td>{e(t)}</td></tr>' for i, (d, t) in enumerate(week))
+        hours_html = f"<table>{rows}</table>"
+        status = '<div class="status" id="open-status"><span class="dot"></span><span>Opening hours below</span></div>'
+    elif lead.get("opening_hours"):
+        hours_html = f'<p class="raw">{e(lead["opening_hours"]).replace(";", "<br>")}</p>'
+        status = ""
+    else:
+        hours_html = (f'<p class="raw">Please get in touch for our current opening hours — '
+                      f'<a href="{e(cta_href)}">{e(cta_short.lower())}</a>.</p>')
+        status = ""
+
+    lat, lon = lead.get("lat"), lead.get("lon")
+    if lat and lon:
+        bbox = f"{lon - .006},{lat - .0035},{lon + .006},{lat + .0035}"
+        map_html = (f'<iframe title="Map showing {e(name)}" loading="lazy" '
+                    f'src="https://www.openstreetmap.org/export/embed.html?bbox={bbox}&amp;layer=mapnik&amp;marker={lat},{lon}">'
+                    f'</iframe>')
+    else:
+        q = urllib.parse.quote_plus(address or f"{name} {city}")
+        map_html = (f'<div class="nomap"><div><span class="ic" style="margin:0 auto 14px">{icon("map-pin", 20)}</span>'
+                    f'<p style="margin:0 0 6px;color:var(--ink);font-weight:600">{e(address or city or name)}</p>'
+                    f'<a href="https://www.openstreetmap.org/search?query={q}" target="_blank" rel="noopener">Open in maps →</a>'
+                    f'</div></div>')
+
+    schema = {"@context": "https://schema.org", "@type": "LocalBusiness", "name": name, "email": email}
+    if phone:
+        schema["telephone"] = phone
+    if address or city:
+        schema["address"] = {"@type": "PostalAddress", "streetAddress": address, "addressLocality": city}
+    if lat and lon:
+        schema["geo"] = {"@type": "GeoCoordinates", "latitude": lat, "longitude": lon}
+
+    favicon = urllib.parse.quote(
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='16' "
+        f"fill='{c['accent']}'/><text x='32' y='44' font-size='34' font-family='Arial' font-weight='700' "
+        f"text-anchor='middle' fill='{c['on_accent']}'>{e(name[:1].upper())}</text></svg>")
+
+    studio = e(cfg["business_name"])
+    preview_bar = "" if final else (
+        f'<div class="preview-bar">Free website preview made for {e(name)} by {studio}. '
+        f'<a href="mailto:{e(cfg["reply_to_email"])}?subject={urllib.parse.quote("Website for " + name)}">'
+        f'Make it yours →</a></div>')
+    services_title, services_intro = SERVICES_COPY[kind]
+
     return TEMPLATE.substitute(
+        title=e(f"{name} | {category}{in_city}" if category else f"{name}{in_city}"),
+        description=e(f"{name}{in_city}. {theme['tagline']}"),
+        favicon=favicon,
+        font_query=font_query,
+        display_font=display_font,
+        body_font=body_font,
+        schema=json.dumps(schema).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"),
+        preview_bar=preview_bar,
         name=e(name),
-        initial=e(name.strip()[:1].upper()),
-        category=e(nice_category(lead["category"] or "")),
-        location=e(location),
-        in_location=e(f" in {location}" if location else ""),
+        initial=e(name[:1].upper()),
+        eyebrow=e(" · ".join(filter(None, [category, city])) or "Locally owned"),
         tagline=e(theme["tagline"]),
-        services=services,
-        cta=e(theme["cta"] if phone_digits else "Email us"),
-        cta_href=e(cta_href),
-        accent=theme["accent"],
-        accent2=theme["accent2"],
-        kind=theme["kind"],
-        email=e(lead["email"]),
-        phone=contact_phone,
-        address=e(lead["address"]),
+        cta=e(cta), cta_short=e(cta_short), cta_href=e(cta_href), cta_icon=cta_icon,
+        cta_heading=e(CTA_HEADINGS[kind]),
+        contact_items="".join(contact),
+        status_line=status,
+        highlights="".join(f"<li>{icon('check', 22)}{e(h)}</li>" for h in theme["highlights"]),
+        services_title=e(services_title),
+        services_intro=e(services_intro),
+        services="".join(f'<div class="service"><div class="ic">{icon(i, 24)}</div><h3>{e(t)}</h3><p>{e(d)}</p></div>'
+                         for i, t, d in theme["services"]),
+        about=e(theme["about"].format(name=name, in_city=in_city)),
+        panel_line=e(" · ".join(filter(None, [category, city])) or "Independent & locally owned"),
+        address_line=e(", ".join(filter(None, [address, city if city not in address else ""]))
+                       or "Get in touch and we'll point you in the right direction."),
         hours=hours_html,
-        map_url=f"https://www.openstreetmap.org/search?query={map_q}",
-        studio=e(cfg["business_name"]),
-        studio_email=e(cfg["reply_to_email"]),
+        hours_json=json.dumps([t for _, t in week]) if week else "null",
+        map=map_html,
+        footer_location=e(f" · {city}" if city else ""),
+        credit=f"Website by {studio}",
+        **c,
     )
 
 
@@ -122,20 +173,23 @@ def preview_url(cfg, slug):
     return f"{base}/{slug}/" if base else ""
 
 
-def build(conn, cfg, sites_dir, rebuild=False, lead_ids=None):
-    sites_dir = Path(sites_dir)
-    query = "SELECT * FROM leads WHERE status IN ('new','site_built')" if rebuild else \
+def build_one(conn, cfg, sites_dir, lead):
+    slug = lead["slug"] or f"{slugify(lead['name'])}-{lead['id']}"
+    out = Path(sites_dir) / slug
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "index.html").write_text(render(lead, cfg), encoding="utf-8")
+    status = "site_built" if lead["status"] == "new" else lead["status"]
+    conn.execute("UPDATE leads SET slug=?, status=? WHERE id=?", (slug, status, lead["id"]))
+    conn.commit()
+    return slug
+
+
+def build(conn, cfg, sites_dir, rebuild=False):
+    """Build sites for new leads (and, with rebuild, every lead that already has one). Returns built ids."""
+    query = "SELECT * FROM leads WHERE status='new' OR slug IS NOT NULL" if rebuild else \
         "SELECT * FROM leads WHERE status='new'"
     built = []
     for lead in conn.execute(query).fetchall():
-        if lead_ids and lead["id"] not in lead_ids:
-            continue
-        slug = lead["slug"] or f"{slugify(lead['name'])}-{lead['id']}"
-        out = sites_dir / slug
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "index.html").write_text(render(lead, cfg), encoding="utf-8")
-        conn.execute("UPDATE leads SET slug=?, status='site_built' WHERE id=?", (slug, lead["id"]))
+        build_one(conn, cfg, sites_dir, lead)
         built.append(lead["id"])
-    conn.commit()
     return built
-

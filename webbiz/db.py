@@ -28,13 +28,23 @@ CREATE TABLE IF NOT EXISTS suppressions (
     reason TEXT,
     created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS sends (
+-- Every email to or from a lead: the admin mailbox reads from here.
+-- kind: outreach | followup | reply (all outgoing) | inbound | bounce
+CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
-    lead_id INTEGER NOT NULL REFERENCES leads(id),
-    step INTEGER NOT NULL,
-    subject TEXT,
-    sent_at TEXT NOT NULL
+    lead_id INTEGER REFERENCES leads(id),
+    direction TEXT NOT NULL CHECK (direction IN ('out', 'in')),
+    kind TEXT NOT NULL,
+    subject TEXT DEFAULT '',
+    body TEXT DEFAULT '',
+    from_addr TEXT DEFAULT '',
+    to_addr TEXT DEFAULT '',
+    message_id TEXT UNIQUE,
+    in_reply_to TEXT DEFAULT '',
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS messages_lead ON messages(lead_id, created_at);
 """
 
 # Lead lifecycle: new -> site_built -> contacted -> (replied | opted_out | bounced | won | lost)
@@ -47,7 +57,7 @@ def now():
 
 def connect(path):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
@@ -83,3 +93,15 @@ def set_status(conn, lead_id, status):
         raise ValueError(f"unknown status {status!r}; choose from {', '.join(STATUSES)}")
     conn.execute("UPDATE leads SET status=? WHERE id=?", (status, lead_id))
     conn.commit()
+
+
+def add_message(conn, lead_id, direction, kind, msg_id, subject="", body="", from_addr="", to_addr="",
+                in_reply_to="", created_at=None, is_read=None):
+    """Store an email; returns False if this Message-ID is already stored."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO messages (lead_id, direction, kind, subject, body, from_addr, to_addr, message_id, "
+        "in_reply_to, is_read, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (lead_id, direction, kind, subject, body, from_addr, to_addr, msg_id, in_reply_to,
+         int(direction == "out") if is_read is None else int(is_read), created_at or now()))
+    conn.commit()
+    return cur.rowcount == 1

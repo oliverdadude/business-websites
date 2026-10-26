@@ -16,7 +16,8 @@ import smtplib
 import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from email.utils import make_msgid, parseaddr
+from email.header import decode_header, make_header
+from email.utils import make_msgid, parseaddr, parsedate_to_datetime
 from pathlib import Path
 
 from . import db
@@ -113,16 +114,19 @@ def due(conn, cfg):
 
 
 def sent_today(conn):
+    """Cold emails (first touch + follow-up) sent since midnight UTC. Manual replies don't count."""
     start = _now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
-    return conn.execute("SELECT COUNT(*) FROM sends WHERE sent_at>=?", (start,)).fetchone()[0]
+    return conn.execute("SELECT COUNT(*) FROM messages WHERE direction='out' AND kind IN ('outreach','followup') "
+                        "AND created_at>=?", (start,)).fetchone()[0]
 
 
-def check_ready(cfg):
+def check_ready(cfg, for_outreach=True):
     problems = []
-    if not cfg["postal_address"]:
-        problems.append("set postal_address in config.json (required by anti-spam law)")
-    if not cfg["preview_base_url"]:
-        problems.append("set preview_base_url in config.json and publish output/sites there (see README)")
+    if for_outreach:
+        if not cfg["postal_address"]:
+            problems.append("set postal_address in config.json (required by anti-spam law)")
+        if not cfg["preview_base_url"]:
+            problems.append("set preview_base_url in config.json and publish output/sites there (see README)")
     if "example.com" in cfg["reply_to_email"]:
         problems.append("set reply_to_email in config.json")
     for k in ("host", "user", "password"):
@@ -131,34 +135,46 @@ def check_ready(cfg):
     return problems
 
 
+def _smtp(cfg):
+    smtp = smtplib.SMTP(cfg["smtp"]["host"], cfg["smtp"]["port"], timeout=60)
+    smtp.starttls()
+    smtp.login(cfg["smtp"]["user"], cfg["smtp"]["password"])
+    return smtp
+
+
+def _record_sent(conn, lead_id, kind, msg):
+    db.add_message(conn, lead_id, "out", kind, msg["Message-ID"], msg["Subject"], msg.get_content(),
+                   msg["From"], msg["To"], msg.get("In-Reply-To", ""))
+
+
+def queue(conn, cfg, limit=None, skip_ids=()):
+    """What `send` would send right now, honouring the daily limit."""
+    budget = cfg["daily_send_limit"] - sent_today(conn)
+    if limit is not None:
+        budget = min(budget, limit)
+    return [(r, s) for r, s in due(conn, cfg) if r["id"] not in skip_ids][:max(budget, 0)]
+
+
 def send(conn, cfg, live=False, limit=None, outbox=None, skip_ids=(), log=print, sleep=time.sleep):
     if live:
         problems = check_ready(cfg)
         if problems:
             raise SystemExit("Not ready to send:\n  - " + "\n  - ".join(problems))
-    budget = cfg["daily_send_limit"] - sent_today(conn)
-    if limit is not None:
-        budget = min(budget, limit)
-    queue = [(r, s) for r, s in due(conn, cfg) if r["id"] not in skip_ids][:max(budget, 0)]
-    if not queue:
+    todo = queue(conn, cfg, limit, skip_ids)
+    if not todo:
         log("Nothing to send (no leads due, or today's limit is reached).")
         return 0
 
-    smtp = None
-    if live:
-        smtp = smtplib.SMTP(cfg["smtp"]["host"], cfg["smtp"]["port"], timeout=60)
-        smtp.starttls()
-        smtp.login(cfg["smtp"]["user"], cfg["smtp"]["password"])
+    smtp = _smtp(cfg) if live else None
     count = 0
     try:
-        for i, (lead, step) in enumerate(queue):
+        for i, (lead, step) in enumerate(todo):
             msg = compose(lead, cfg, step)
             if live:
                 if i:
                     sleep(random.uniform(cfg["min_delay_seconds"], cfg["max_delay_seconds"]))
                 smtp.send_message(msg)
-                conn.execute("INSERT INTO sends (lead_id, step, subject, sent_at) VALUES (?,?,?,?)",
-                             (lead["id"], step, msg["Subject"], db.now()))
+                _record_sent(conn, lead["id"], "outreach" if step == 1 else "followup", msg)
                 conn.execute("UPDATE leads SET status='contacted', emails_sent=emails_sent+1, last_emailed_at=? "
                              "WHERE id=?", (db.now(), lead["id"]))
                 conn.commit()
@@ -177,6 +193,31 @@ def send(conn, cfg, live=False, limit=None, outbox=None, skip_ids=(), log=print,
     return count
 
 
+def send_reply(conn, cfg, lead, subject, body):
+    """Send a hand-written email to a lead (from the admin mailbox), threaded onto their last message."""
+    problems = check_ready(cfg, for_outreach=False)
+    if problems:
+        raise SystemExit("Not ready to send:\n  - " + "\n  - ".join(problems))
+    last_in = conn.execute("SELECT message_id FROM messages WHERE lead_id=? AND direction='in' "
+                           "ORDER BY created_at DESC LIMIT 1", (lead["id"],)).fetchone()
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"{cfg['your_name']} <{cfg['smtp']['from_email']}>"
+    msg["To"] = lead["email"]
+    msg["Reply-To"] = cfg["reply_to_email"]
+    msg["Message-ID"] = make_msgid(domain=cfg["smtp"]["from_email"].split("@")[-1])
+    if last_in and last_in["message_id"]:
+        msg["In-Reply-To"] = msg["References"] = last_in["message_id"]
+    msg.set_content(body)
+    smtp = _smtp(cfg)
+    try:
+        smtp.send_message(msg)
+    finally:
+        smtp.quit()
+    _record_sent(conn, lead["id"], "reply", msg)
+    return msg
+
+
 def _text_of(msg):
     parts = msg.walk() if msg.is_multipart() else [msg]
     out = []
@@ -184,7 +225,12 @@ def _text_of(msg):
         if part.get_content_type() == "text/plain":
             payload = part.get_payload(decode=True) or b""
             out.append(payload.decode(part.get_content_charset() or "utf-8", "replace"))
-    return "\n".join(out)
+    if not out:  # HTML-only email: strip tags for a readable fallback
+        for part in parts if msg.is_multipart() else [msg]:
+            if part.get_content_type() == "text/html":
+                raw = (part.get_payload(decode=True) or b"").decode(part.get_content_charset() or "utf-8", "replace")
+                out.append(re.sub(r"\n\s*\n+", "\n\n", re.sub(r"<[^>]+>", "", re.sub(r"(?i)<br\s*/?>|</p>", "\n", raw))))
+    return "\n".join(out).strip()
 
 
 def classify(msg, lead_emails):
@@ -206,17 +252,49 @@ def classify(msg, lead_emails):
     return None
 
 
+def _decode(value):
+    return str(make_header(decode_header(value or "")))
+
+
+def _date_of(msg):
+    try:
+        return parsedate_to_datetime(msg["Date"]).astimezone(timezone.utc).isoformat(timespec="seconds")
+    except Exception:
+        return db.now()
+
+
+def ingest(conn, raw, leads):
+    """Store one inbound email if it's from (or bounced from) a lead and update the lead. Returns outcome or None."""
+    msg = email.message_from_bytes(raw)
+    hit = classify(msg, leads)
+    if not hit:
+        return None
+    addr, outcome = hit
+    lead = leads[addr]
+    msg_id = msg.get("Message-ID") or f"<no-id-{hash(raw)}@webbiz>"
+    is_new = db.add_message(conn, lead["id"], "in", "bounce" if outcome == "bounced" else "inbound", msg_id,
+                            _decode(msg.get("Subject")), _text_of(msg), _decode(msg.get("From")),
+                            _decode(msg.get("To")), msg.get("In-Reply-To", ""), _date_of(msg))
+    if not is_new:
+        return None  # already processed on an earlier sync; don't override manual status changes
+    if outcome in ("opted_out", "bounced"):
+        db.suppress(conn, addr, "bounce" if outcome == "bounced" else "opt-out")
+    elif lead["status"] in ("site_built", "contacted"):
+        db.set_status(conn, lead["id"], "replied")
+    return outcome
+
+
 def sync_replies(conn, cfg, log=print):
     imap_cfg = cfg["imap"]
     if not imap_cfg["host"]:
         raise SystemExit("Set IMAP_HOST (and IMAP_USER / IMAP_PASS if different from SMTP) to sync replies.")
     leads = {r["email"].lower(): r for r in conn.execute(
-        "SELECT * FROM leads WHERE status IN ('contacted','replied')")}
+        "SELECT * FROM leads WHERE id IN (SELECT lead_id FROM messages WHERE direction='out')")}
     if not leads:
         log("No contacted leads to check.")
         return {}
-    since = min(r["last_emailed_at"] or db.now() for r in leads.values())[:10]
-    since_imap = datetime.fromisoformat(since).strftime("%d-%b-%Y")
+    first_sent = conn.execute("SELECT MIN(created_at) FROM messages WHERE direction='out'").fetchone()[0]
+    since_imap = (datetime.fromisoformat(first_sent) - timedelta(days=1)).strftime("%d-%b-%Y")
     results = {}
     with imaplib.IMAP4_SSL(imap_cfg["host"]) as box:
         box.login(imap_cfg["user"], imap_cfg["password"])
@@ -224,14 +302,12 @@ def sync_replies(conn, cfg, log=print):
         _, data = box.search(None, f'(SINCE "{since_imap}")')
         for num in data[0].split():
             _, parts = box.fetch(num, "(BODY.PEEK[])")
-            hit = classify(email.message_from_bytes(parts[0][1]), leads)
-            if hit:
-                results[hit[0]] = hit[1] if results.get(hit[0]) != "opted_out" else "opted_out"
+            raw = parts[0][1]
+            outcome = ingest(conn, raw, leads)
+            if outcome:
+                addr = classify(email.message_from_bytes(raw), leads)[0]
+                results[addr] = outcome if results.get(addr) != "opted_out" else "opted_out"
     for addr, outcome in results.items():
-        if outcome in ("opted_out", "bounced"):
-            db.suppress(conn, addr, "bounce" if outcome == "bounced" else "opt-out")
-        elif leads[addr]["status"] == "contacted":
-            db.set_status(conn, leads[addr]["id"], "replied")
         log(f"{outcome:9} {addr} ({leads[addr]['name']})")
     log(f"{len(results)} lead(s) updated from the inbox.")
     return results

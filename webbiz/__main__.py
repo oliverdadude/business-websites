@@ -11,6 +11,7 @@
   python -m webbiz mark ID won|lost|replied|skipped    update a lead by hand
   python -m webbiz optout EMAIL                        never email this address again
   python -m webbiz stats                               pipeline summary
+  python -m webbiz admin [--demo]                      dashboard at http://127.0.0.1:8080
 """
 import argparse
 import subprocess
@@ -67,8 +68,15 @@ def main(argv=None):
 
     sub.add_parser("stats", help="pipeline summary")
 
+    a = sub.add_parser("admin", help="open the admin dashboard (leads, mailbox, websites)")
+    a.add_argument("--host", default="127.0.0.1")
+    a.add_argument("--port", type=int, default=8080)
+    a.add_argument("--demo", action="store_true", help="explore with sample data (separate demo database)")
+
     args = p.parse_args(argv)
     cfg = config.load(args.config)
+    if getattr(args, "demo", False):
+        cfg.update(db_path="data/demo.db", sites_dir="output/demo-sites")
     conn = db.connect(config.resolve(cfg, "db_path"))
     sites_dir = config.resolve(cfg, "sites_dir")
     outbox = config.ROOT / "output" / "outbox"
@@ -116,10 +124,16 @@ def main(argv=None):
     elif args.cmd == "optout":
         db.suppress(conn, args.email, "opt-out")
         print(f"{args.email} will never be emailed.")
+    elif args.cmd == "admin":
+        from . import admin
+        if args.demo:
+            from . import demo
+            demo.seed(conn, cfg, sites_dir)
+        admin.serve(cfg, args.host, args.port)
     elif args.cmd == "stats":
         for row in conn.execute("SELECT status, COUNT(*) n FROM leads GROUP BY status ORDER BY n DESC"):
             print(f"{row['status']:<11} {row['n']}")
-        total = conn.execute("SELECT COUNT(*) FROM sends").fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM messages WHERE direction='out'").fetchone()[0]
         print(f"\nemails sent: {total}  (today: {outreach.sent_today(conn)}/{cfg['daily_send_limit']})")
 
 

@@ -11,8 +11,47 @@ An automated pipeline for a small web-design business:
 4. **Email** them the link with your offer, and send one polite follow-up.
 5. **Sync** your inbox: replies stop follow-ups, opt-outs and bounces are suppressed forever.
 
+6. **Admin dashboard** to run all of this from your browser: a mailbox for every email
+   sent and received, a live preview of each business's website, and a pipeline tracker.
+
 Business side: see [`business/offer-and-pricing.md`](business/offer-and-pricing.md) and
 [`business/playbook.md`](business/playbook.md).
+
+## Admin dashboard
+
+```bash
+python -m webbiz admin            # open http://127.0.0.1:8080
+python -m webbiz admin --demo     # try it with sample data first (separate demo database)
+```
+
+- **Dashboard**: pipeline numbers, the latest replies, and buttons to find, build, publish,
+  send (preview or live) and sync. Long jobs run in the background with a live log.
+- **Leads**: search and filter every business. Each lead page shows:
+  - its website in a desktop or mobile preview
+  - the whole email conversation, plus the next email waiting to go out
+  - a reply box that sends from your own address, threaded onto their message
+  - editable details (phone, hours, address and so on), with "Save & rebuild site"
+  - **Download final**, which gives you the site without the "free preview" banner, ready to hand over
+- **Mailbox**: Inbox (replies, opt-outs, bounces), Sent, and Queued (what the next send will
+  email). Unread replies are highlighted and counted in the sidebar.
+- **Websites**: a gallery of every site you've built.
+
+The dashboard only listens on your own computer by default. To open it from another device,
+set `ADMIN_PASSWORD` and run it with `--host 0.0.0.0`.
+
+## Website designs
+
+Each site is themed by business type, with its own fonts, colours, wording and services:
+food, beauty, trades, health, auto, fitness, accommodation, professional services, and
+general shops. Each site includes:
+- contact details with a call or email button (sticky on mobile)
+- a weekly opening-hours table with a live "Open now" indicator
+- a map
+- search-engine business data (schema.org)
+
+Wording is deliberately generic and truthful: no invented reviews or awards. Themes live in
+`webbiz/themes.py` and the layout in `webbiz/templates/site.html`. After changing either,
+run `python -m webbiz build --rebuild` to regenerate existing sites.
 
 Pure Python 3.10+ standard library — nothing to install.
 
@@ -54,6 +93,7 @@ python -m webbiz sync                              # process replies / opt-outs 
 python -m webbiz leads --status replied            # who wants a site
 python -m webbiz mark 12 won                       # record a sale
 python -m webbiz stats
+python -m webbiz admin                             # the dashboard
 ```
 
 Or all in one (good for a daily cron job):

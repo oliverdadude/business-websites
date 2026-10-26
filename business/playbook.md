@@ -1,11 +1,11 @@
 # Daily playbook
 
 ## Every day (≈20 minutes)
-1. `python -m webbiz run "<next town>" --live` — syncs replies, finds new leads, builds
-   their sites, publishes, and sends up to `daily_send_limit` emails + due follow-ups.
-2. Check your inbox. `python -m webbiz leads --status replied` lists everyone who answered.
-3. Reply to every interested lead the same day (templates below).
-4. Record outcomes: `python -m webbiz mark <id> won` / `lost`.
+1. Open the dashboard (`python -m webbiz admin`) and click **Sync inbox**, or run
+   `python -m webbiz run "<next town>" --live` to sync, find, build, publish and send in one go.
+2. Work through the **Mailbox → Inbox**. Each reply opens next to the lead's website.
+3. Reply to every interested lead the same day, right from the dashboard (templates below).
+4. Set the lead's status to **Won** or **Lost** from the dropdown on its page.
 
 Work through towns one at a time. Start small (30/day) on a new sending domain and
 raise the limit slowly over a few weeks.
@@ -33,9 +33,9 @@ raise the limit slowly over a few weeks.
 `python -m webbiz optout <email>` — `sync` does this automatically when it can tell.
 
 ## Delivering a sale
-1. Copy `output/sites/<slug>/` into a new folder for the client.
-2. Remove the dark "free preview" bar at the top of `index.html`.
-3. Add their photos and real wording; deploy to Netlify/Cloudflare Pages on their domain.
+1. Update their details on the lead page (hours, phone, address), then click **Save & rebuild site**.
+2. Click **Download final** to get the site without the "free preview" banner.
+3. Add their photos and real wording, then deploy it to Netlify or Cloudflare Pages on their domain.
 4. Set up a Google Business Profile with the new website link (big win for them).
 
 ## Using your prospecting skill too

@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>webbiz admin</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%234f46e5'/%3E%3Cpath d='M16 22l8 22 8-16 8 16 8-22' stroke='white' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #111827; --muted: #6b7280; --faint: #9ca3af; --line: #e5e7eb; --line2: #f0f1f3;
+    --brand: #4f46e5; --brand-soft: #eef2ff; --side: #0f1117; --side-ink: #c9cdd6; --side-hi: #ffffff;
+    --ok: #059669; --warn: #b45309; --bad: #dc2626;
+    --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+  a { color: var(--brand); text-decoration: none; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  svg { display: block; flex: none; }
+
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  aside.side { background: var(--side); color: var(--side-ink); padding: 18px 12px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; }
+  .logo { display: flex; align-items: center; gap: 10px; color: var(--side-hi); font-weight: 700; font-size: 15px; padding: 4px 10px 18px; }
+  .logo .m { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); display: grid; place-items: center; }
+  .logo small { display: block; font-weight: 500; color: #7c8291; font-size: 12px; }
+  .nav a { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: var(--side-ink); font-weight: 500; }
+  .nav a:hover { background: #1b1e27; color: var(--side-hi); }
+  .nav a.on { background: #232734; color: var(--side-hi); }
+  .nav .count { margin-left: auto; background: var(--brand); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+  .nav .sub { padding-left: 38px; font-size: 13px; }
+  .side .foot { margin-top: auto; font-size: 12px; color: #6b7080; padding: 10px; }
+
+  main { min-width: 0; padding: 28px 32px 64px; }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+  .head h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+  .head p { margin: 2px 0 0; color: var(--muted); }
+  .crumb { color: var(--muted); font-size: 13px; margin-bottom: 4px; display: inline-flex; gap: 6px; align-items: center; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .panel > .ph { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line2); }
+  .panel > .ph h2 { font-size: 14px; margin: 0; }
+  .panel > .pb { padding: 18px; }
+  .grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: start; }
+  .stack { display: grid; gap: 20px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 20px; }
+  .tile { padding: 16px 18px; }
+  .tile .k { color: var(--muted); font-size: 12px; font-weight: 500; }
+  .tile .v { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin-top: 4px; }
+  .tile .s { color: var(--faint); font-size: 12px; }
+  .funnel { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--line2); margin: 6px 0 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background .12s, border-color .12s; color: var(--ink); }
+  .btn:hover { background: #f9fafb; border-color: #d1d5db; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .btn.primary:hover { background: #4338ca; }
+  .btn.danger { color: var(--bad); }
+  .btn.sm { padding: 5px 10px; font-size: 13px; }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input.in, select.in, textarea.in { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; outline: none; }
+  input.in:focus, select.in:focus, textarea.in:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+  textarea.in { resize: vertical; min-height: 90px; }
+  label.f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .fields .full { grid-column: 1 / -1; }
+
+  .actions { display: grid; gap: 14px; }
+  .act { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 14px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--line2); }
+  .act > div:first-child { flex: 1 1 220px; }
+  .act:last-of-type { border-bottom: 0; padding-bottom: 0; }
+  .act b { display: block; font-size: 14px; }
+  .act span { color: var(--muted); font-size: 13px; }
+  .log { background: #0f1117; color: #d1d5db; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; max-height: 260px; overflow: auto; margin-top: 14px; }
+  .log .err { color: #fca5a5; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .banner { display: flex; gap: 12px; padding: 12px 16px; border-radius: var(--radius); background: #fffbeb; border: 1px solid #fde68a; color: #92400e; margin-bottom: 20px; }
+  .banner ul { margin: 4px 0 0; padding-left: 18px; }
+
+  table.t { width: 100%; border-collapse: collapse; }
+  .t th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fafafa; position: sticky; top: 0; }
+  .t td { padding: 11px 14px; border-bottom: 1px solid var(--line2); vertical-align: middle; }
+  .t tr.click { cursor: pointer; }
+  .t tr.click:hover td { background: #fafbff; }
+  .t .name { font-weight: 600; }
+  .t .sub { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .s-new { background: #f3f4f6; color: #4b5563; }
+  .s-site_built { background: #eef2ff; color: #4338ca; }
+  .s-contacted { background: #eff6ff; color: #1d4ed8; }
+  .s-replied { background: #fef3c7; color: #b45309; }
+  .s-won { background: #d1fae5; color: #047857; }
+  .s-lost, .s-skipped { background: #f3f4f6; color: #6b7280; }
+  .s-opted_out, .s-bounced { background: #fee2e2; color: #b91c1c; }
+  .badge { background: var(--brand); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--muted); }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .chip em { font-style: normal; opacity: .7; margin-left: 4px; }
+  .empty { text-align: center; color: var(--muted); padding: 48px 20px; }
+  .empty b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
+
+  /* Lead page */
+  .lead-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr); gap: 20px; align-items: start; }
+  .browser { overflow: hidden; }
+  .browser .bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fafafa; }
+  .dots { display: flex; gap: 6px; } .dots i { width: 10px; height: 10px; border-radius: 50%; background: #e5e7eb; }
+  .url { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .frame-wrap { background: #e9ebef; height: 720px; overflow: hidden; position: relative; }
+  .frame-wrap iframe { border: 0; background: #fff; width: 1280px; transform-origin: 0 0; display: block; }
+  .frame-wrap.mobile { display: flex; justify-content: center; }
+  .frame-wrap.mobile iframe { width: 390px; height: 100% !important; transform: none !important; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .nosite { display: grid; place-items: center; height: 100%; color: var(--muted); text-align: center; padding: 20px; }
+
+  .thread { display: grid; gap: 12px; }
+  .msg { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: #fff; }
+  .msg.in { border-color: #fde68a; background: #fffdf5; }
+  .msg.unread { box-shadow: inset 3px 0 0 var(--brand); }
+  .msg.draft { border-style: dashed; background: #fafafa; }
+  .msg .mh { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .msg .mh b { color: var(--ink); }
+  .msg .subj { font-weight: 600; margin-bottom: 6px; }
+  .msg pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: inherit; color: #374151; }
+  .msg pre.clamp { max-height: 130px; overflow: hidden; mask-image: linear-gradient(#000 70%, transparent); }
+  .more { font-size: 12px; font-weight: 600; cursor: pointer; color: var(--brand); background: none; border: 0; padding: 4px 0 0; }
+  .tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 4px; background: var(--line2); color: var(--muted); }
+  .tag.in { background: #fef3c7; color: #92400e; } .tag.bounce { background: #fee2e2; color: #b91c1c; }
+
+  /* Mailbox */
+  .mail { display: grid; grid-template-columns: 380px 1fr; min-height: 640px; overflow: hidden; }
+  .mail .list { border-right: 1px solid var(--line); overflow: auto; max-height: calc(100vh - 170px); }
+  .mail .item { padding: 12px 16px; border-bottom: 1px solid var(--line2); cursor: pointer; display: grid; gap: 2px; }
+  .mail .item:hover { background: #fafbff; }
+  .mail .item.on { background: var(--brand-soft); }
+  .mail .item .top { display: flex; justify-content: space-between; gap: 8px; }
+  .mail .item .who { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mail .item.unread .who, .mail .item.unread .sj { font-weight: 700; }
+  .mail .item .when { color: var(--faint); font-size: 12px; white-space: nowrap; }
+  .mail .item .sj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mail .item .sn { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mail .read { padding: 22px 26px; overflow: auto; max-height: calc(100vh - 170px); }
+  .mail .read h2 { margin: 0 0 6px; font-size: 18px; }
+  .mail .read .meta { color: var(--muted); font-size: 13px; margin-bottom: 18px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mail .read pre { white-space: pre-wrap; word-wrap: break-word; font: inherit; font-size: 14px; color: #1f2937; margin: 0 0 22px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); padding: 0 12px; }
+  .tabs a { padding: 12px 10px; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; }
+  .tabs a.on { color: var(--ink); border-color: var(--ink); }
+
+  /* Sites */
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+  .site-card { overflow: hidden; display: flex; flex-direction: column; }
+  .thumb { position: relative; height: 190px; overflow: hidden; background: #e9ebef; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .thumb iframe { width: 1280px; height: 870px; transform: scale(.25); transform-origin: 0 0; border: 0; pointer-events: none; background: #fff; }
+  .thumb.fit iframe { transform: scale(var(--s)); }
+  .site-card .info { padding: 12px 14px; display: grid; gap: 8px; }
+  .site-card .info .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .site-card .info .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .toast { position: fixed; right: 20px; bottom: 20px; z-index: 50; background: var(--ink); color: #fff; padding: 11px 16px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.2); font-weight: 500; max-width: 420px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast.err { background: var(--bad); }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  .hr { height: 1px; background: var(--line2); margin: 16px 0; }
+
+  @media (max-width: 1200px) { .tiles { grid-template-columns: repeat(3, 1fr); } .lead-grid, .grid2 { grid-template-columns: 1fr; } }
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+    aside.side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px; }
+    .logo { padding: 4px 10px; } .nav { display: flex; flex-wrap: wrap; } .nav .sub, .side .foot { display: none; }
+    main { padding: 20px 16px 48px; }
+    .tiles { grid-template-columns: repeat(2, 1fr); }
+    .mail { grid-template-columns: 1fr; } .mail .list { max-height: 320px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .fields { grid-template-columns: 1fr; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="logo"><div class="m"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l4 12 5-9 5 9 4-12"/></svg></div><div><span id="bizname">webbiz</span><small>Admin</small></div></div>
+    <nav class="nav">
+      <a href="#/" data-nav="dash"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
+      <a href="#/leads" data-nav="leads"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Leads</a>
+      <a href="#/mail/inbox" data-nav="mail"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Mailbox<span class="count" id="unread" hidden></span></a>
+      <a href="#/mail/inbox" class="sub" data-nav="mail-inbox">Inbox</a>
+      <a href="#/mail/sent" class="sub" data-nav="mail-sent">Sent</a>
+      <a href="#/mail/queued" class="sub" data-nav="mail-queued">Queued</a>
+      <a href="#/sites" data-nav="sites"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Websites</a>
+    </nav>
+    <div class="foot">Runs locally on your machine.</div>
+  </aside>
+  <main id="view"></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const view = $("#view");
+const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const LABEL = { new: "New", site_built: "Site ready", contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", opted_out: "Opted out", bounced: "Bounced", skipped: "Skipped" };
+const COLORS = { new: "#9ca3af", site_built: "#6366f1", contacted: "#3b82f6", replied: "#f59e0b", won: "#10b981", lost: "#d1d5db", skipped: "#e5e7eb", opted_out: "#f87171", bounced: "#fca5a5" };
+const pill = (s) => `<span class="pill s-${h(s)}">${h(LABEL[s] || s)}</span>`;
+const cat = (c) => (c || "").split("=").pop().split(";")[0].replace(/_/g, " ").replace(/^\w/, (m) => m.toUpperCase());
+let state = { leadsFilter: "", leadsQuery: "", mailSel: null };
+
+function when(iso, long) {
+  if (!iso) return "";
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z"), s = (Date.now() - d) / 1000;
+  if (long) return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  if (s < 86400 * 7) return Math.floor(s / 86400) + "d ago";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-Webbiz": "1" }, body: JSON.stringify(body) };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({ error: res.statusText }));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+let toastTimer;
+function toast(msg, err) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = "toast"), err ? 6000 : 3000);
+}
+async function guard(fn) { try { return await fn(); } catch (e) { toast(e.message, true); } }
+
+function setNav(key, sub) {
+  document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.nav === key || a.dataset.nav === sub));
+}
+
+async function refreshBadge() {
+  const s = await api("/api/stats").catch(() => null); if (!s) return;
+  const u = $("#unread"); u.hidden = !s.unread; u.textContent = s.unread;
+  $("#bizname").textContent = s.business_name;
+  return s;
+}
+
+// ---------- Dashboard ----------
+async function dashboard() {
+  setNav("dash");
+  const s = await api("/api/stats");
+  const b = s.by_status, n = (k) => b[k] || 0;
+  const contacted = n("contacted") + n("replied") + n("won") + n("lost") + n("opted_out") + n("bounced");
+  const replyRate = contacted ? Math.round(((n("replied") + n("won") + n("lost")) / contacted) * 100) : 0;
+  const tiles = [
+    ["Total leads", s.total, "found or imported"],
+    ["Sites ready", n("site_built"), "waiting to be emailed"],
+    ["Contacted", contacted, `${s.sent_total} emails sent`],
+    ["Replied", n("replied"), `${replyRate}% reply rate`],
+    ["Won", n("won"), "paying customers"],
+    ["Sent today", `${s.sent_today}<span class="muted" style="font-size:15px">/${s.daily_limit}</span>`, `${s.queue} queued for next send`],
+  ];
+  const order = ["new", "site_built", "contacted", "replied", "won", "lost", "opted_out", "bounced", "skipped"];
+  view.innerHTML = `
+    <div class="head"><div><h1>Dashboard</h1><p>Find businesses, build their sites, and track every conversation.</p></div>
+      <div class="row"><a class="btn" href="#/mail/inbox">Open mailbox</a><a class="btn primary" href="#/leads">View leads</a></div></div>
+    ${s.ready.length ? `<div class="banner"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><div><b>Before sending real emails:</b><ul>${s.ready.map((r) => `<li>${h(r)}</li>`).join("")}</ul></div></div>` : ""}
+    <div class="tiles">${tiles.map(([k, v, sub]) => `<div class="panel tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`).join("")}</div>
+    <div class="grid2">
+      <div class="stack">
+        <div class="panel"><div class="ph"><h2>Pipeline</h2><span class="muted small">${s.total} leads</span></div><div class="pb">
+          <div class="funnel">${order.filter((k) => n(k)).map((k) => `<div title="${LABEL[k]}: ${n(k)}" style="width:${(n(k) / s.total) * 100}%;background:${COLORS[k]}"></div>`).join("")}</div>
+          <div class="legend">${order.filter((k) => n(k)).map((k) => `<a href="#/leads?status=${k}" class="muted"><i style="background:${COLORS[k]}"></i>${LABEL[k]} <b style="color:var(--ink)">${n(k)}</b></a>`).join("") || "No leads yet — find some below."}</div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Latest replies</h2><a href="#/mail/inbox" class="small">View all</a></div>
+          ${s.recent.length ? `<div>${s.recent.map((m) => `<a href="#/leads/${m.lead_id}" style="display:block;color:inherit;padding:12px 18px;border-bottom:1px solid var(--line2)">
+            <div class="row" style="justify-content:space-between"><b>${h(m.name)}</b><span class="muted small">${when(m.created_at)}</span></div>
+            <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.kind === "bounce" ? '<span class="tag bounce">bounced</span> ' : ""}${!m.is_read ? '<span class="badge">new</span> ' : ""}${h((m.body || "").slice(0, 140))}</div></a>`).join("")}</div>`
+          : `<div class="empty"><b>No replies yet</b>${s.imap ? "Click “Sync inbox” to check for new replies." : "Set IMAP_HOST so replies show up here automatically."}</div>`}
+        </div>
+      </div>
+      <div class="panel"><div class="ph"><h2>Run the pipeline</h2><span id="jobstate" class="muted small"></span></div><div class="pb actions">
+        <div class="act"><div><b>1. Find businesses</b><span>Local businesses with an email but no website (OpenStreetMap).</span></div>
+          <div class="row" style="flex-basis:100%"><input class="in" id="area" placeholder="Town, e.g. Bend, Oregon" style="flex:1;min-width:150px"><input class="in" id="radius" type="number" value="10" min="1" max="50" style="width:70px" title="Radius in km"><span class="muted small">km</span><button class="btn primary" data-act="find">Find</button></div></div>
+        <div class="act"><div><b>2. Build websites</b><span>Create a preview site for every new lead.</span></div><button class="btn" data-act="build">Build</button></div>
+        <div class="act"><div><b>3. Publish</b><span>${s.publish ? "Upload sites with your publish command." : "Set <code>publish_command</code> in config.json to enable."}</span></div><button class="btn" data-act="publish" ${s.publish ? "" : "disabled"}>Publish</button></div>
+        <div class="act"><div><b>4. Send emails</b><span>${s.queue} queued. Preview first; live send respects your daily limit.</span></div>
+          <div class="row"><button class="btn" data-act="send">Preview</button><button class="btn primary" data-act="send" data-live="1" ${s.ready.length ? "disabled title='Finish setup first'" : ""}>Send live</button></div></div>
+        <div class="act"><div><b>5. Sync inbox</b><span>Pull in replies; opt-outs and bounces are handled automatically.</span></div><button class="btn" data-act="sync" ${s.imap ? "" : "disabled title='Set IMAP_HOST first'"}>Sync</button></div>
+        <div class="log" id="log" hidden></div>
+      </div></div>
+    </div>`;
+  view.querySelectorAll("[data-act]").forEach((btn) => btn.addEventListener("click", () => runAction(btn)));
+  const job = await api("/api/job"); if (job.running || job.log || job.error) showJob(job);
+  if (job.running) pollJob();
+}
+
+async function runAction(btn) {
+  const name = btn.dataset.act, live = !!btn.dataset.live, body = { live };
+  if (name === "find") { body.area = $("#area").value.trim(); body.radius = $("#radius").value; }
+  if (live && !confirm("Send real emails now? This will email every queued lead (up to today's limit), pausing between each one.")) return;
+  await guard(async () => { showJob(await api("/api/actions/" + name, body)); pollJob(); });
+}
+function showJob(job) {
+  const log = $("#log"); if (!log) return;
+  log.hidden = false;
+  log.innerHTML = h(job.log || (job.running ? "Working…" : "")) + (job.error ? `\n<span class="err">${h(job.error)}</span>` : "");
+  log.scrollTop = log.scrollHeight;
+  const st = $("#jobstate"); if (st) st.innerHTML = job.running ? `<span class="row"><span class="spin"></span> Running ${h(job.name)}…</span>` : (job.name ? `Last: ${h(job.name)}${job.error ? " (failed)" : " ✓"}` : "");
+  view.querySelectorAll("[data-act]").forEach((b) => { if (job.running) b.dataset.wasDisabled ??= b.disabled, b.disabled = true; else if (b.dataset.wasDisabled !== undefined) { b.disabled = b.dataset.wasDisabled === "true"; delete b.dataset.wasDisabled; } });
+}
+let polling = false;
+async function pollJob() {
+  if (polling) return; polling = true;
+  try {
+    while (true) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const job = await api("/api/job"); showJob(job);
+      if (!job.running) { if (location.hash === "" || location.hash === "#/") { await dashboard(); showJob(job); } refreshBadge(); job.error ? toast(job.error, true) : toast(`${job.name} finished`); break; }
+    }
+  } finally { polling = false; }
+}
+
+// ---------- Leads ----------
+async function leadsPage(params) {
+  setNav("leads");
+  if (params.has("status")) state.leadsFilter = params.get("status");
+  const [stats, rows] = await Promise.all([api("/api/stats"), api(`/api/leads?status=${encodeURIComponent(state.leadsFilter)}&q=${encodeURIComponent(state.leadsQuery)}`)]);
+  const chips = [["", "All", stats.total], ...Object.keys(LABEL).filter((k) => stats.by_status[k]).map((k) => [k, LABEL[k], stats.by_status[k]])];
+  view.innerHTML = `
+    <div class="head"><div><h1>Leads</h1><p>${stats.total} businesses in your pipeline.</p></div>
+      <input class="in" id="q" placeholder="Search name, email, town, type…" style="max-width:320px" value="${h(state.leadsQuery)}"></div>
+    <div class="chips" style="margin-bottom:14px">${chips.map(([k, l, c]) => `<button class="chip ${state.leadsFilter === k ? "on" : ""}" data-k="${k}">${l}<em>${c}</em></button>`).join("")}</div>
+    <div class="panel" style="overflow:auto">${rows.length ? `<table class="t"><thead><tr><th>Business</th><th class="hide-sm">Email</th><th class="hide-sm">Town</th><th>Status</th><th class="hide-sm">Emails</th><th>Last activity</th><th></th></tr></thead><tbody>
+      ${rows.map((r) => `<tr class="click" data-id="${r.id}"><td><div class="name">${h(r.name)}</div><div class="sub">${h(cat(r.category))}</div></td>
+        <td class="hide-sm">${h(r.email)}</td><td class="hide-sm">${h(r.city)}</td><td>${pill(r.status)}</td><td class="hide-sm">${r.emails_sent}</td>
+        <td class="muted">${when(r.last_activity || r.created_at)}</td><td>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</td></tr>`).join("")}
+      </tbody></table>` : `<div class="empty"><b>No leads here</b>Find businesses from the dashboard, or import a CSV with <code>python -m webbiz import</code>.</div>`}</div>`;
+  view.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { state.leadsFilter = c.dataset.k; location.hash = "#/leads"; route(); }));
+  view.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => (location.hash = "#/leads/" + tr.dataset.id)));
+  let t; $("#q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { state.leadsQuery = e.target.value; leadsPage(new URLSearchParams()).then(() => { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }); }, 250); });
+}
+
+// ---------- Lead detail ----------
+function messageCard(m, i) {
+  const out = m.direction === "out", long = (m.body || "").length > 420;
+  const kind = { outreach: "First email", followup: "Follow-up", reply: "You replied", inbound: "Reply", bounce: "Bounce" }[m.kind] || m.kind;
+  return `<div class="msg ${out ? "out" : "in"} ${!out && !m.is_read ? "unread" : ""}">
+    <div class="mh"><span><span class="tag ${m.kind === "bounce" ? "bounce" : out ? "" : "in"}">${h(kind)}</span> <b>${h(out ? "You" : m.from_addr)}</b></span><span title="${h(when(m.created_at, true))}">${when(m.created_at)}</span></div>
+    <div class="subj">${h(m.subject)}</div><pre class="${long ? "clamp" : ""}" id="mb${i}">${h(m.body)}</pre>${long ? `<button class="more" data-t="mb${i}">Show more</button>` : ""}</div>`;
+}
+
+async function leadPage(id) {
+  setNav("leads");
+  const d = await api("/api/leads/" + id), L = d.lead;
+  if (d.messages.some((m) => m.direction === "in" && !m.is_read)) api(`/api/leads/${id}/read`, {}).then(refreshBadge);
+  const siteUrl = L.slug ? `/sites/${encodeURIComponent(L.slug)}/` : "";
+  const lastIn = [...d.messages].reverse().find((m) => m.direction === "in");
+  view.innerHTML = `
+    <div class="head"><div><a class="crumb" href="#/leads">← Leads</a><h1>${h(L.name)}</h1><p>${h(cat(L.category) || "Business")}${L.city ? " · " + h(L.city) : ""} · ${h(L.email)} ${L.suppressed ? '<span class="pill s-opted_out">Do not contact</span>' : ""}</p></div>
+      <div class="row"><select class="in" id="status" style="width:auto">${d.statuses.map((s) => `<option value="${s}" ${s === L.status ? "selected" : ""}>${LABEL[s]}</option>`).join("")}</select>
+        ${siteUrl ? `<a class="btn" href="${siteUrl}" target="_blank" rel="noopener">Open site ↗</a><a class="btn" href="/final/${L.id}" title="Without the preview banner — ready to deliver">Download final</a>` : ""}
+        <button class="btn" id="rebuild">${L.slug ? "Rebuild site" : "Build site"}</button></div></div>
+    <div class="lead-grid">
+      <div class="panel browser">
+        <div class="bar"><div class="dots"><i></i><i></i><i></i></div><div class="url">${h(L.preview_url || (siteUrl ? location.origin + siteUrl : "No site yet"))}</div>
+          <div class="seg"><button class="on" data-w="desk">Desktop</button><button data-w="mobile">Mobile</button></div></div>
+        <div class="frame-wrap" id="fw">${siteUrl ? `<iframe src="${siteUrl}?t=${Date.now()}" title="Website preview"></iframe>` : `<div class="nosite"><div><b>No website yet</b><br>Click “Build site” to generate one.</div></div>`}</div>
+      </div>
+      <div class="stack">
+        <div class="panel"><div class="ph"><h2>Conversation</h2><span class="muted small">${d.messages.length} message${d.messages.length === 1 ? "" : "s"}</span></div><div class="pb thread">
+          ${d.messages.map(messageCard).join("") || ""}
+          ${d.next_email ? `<div class="msg draft"><div class="mh"><span><span class="tag">Queued · ${d.next_email.step === 1 ? "first email" : "follow-up"}</span></span><span>next send</span></div><div class="subj">${h(d.next_email.subject)}</div><pre class="clamp" id="draft">${h(d.next_email.body)}</pre><button class="more" data-t="draft">Show more</button></div>` : ""}
+          ${!d.messages.length && !d.next_email ? `<div class="empty" style="padding:24px"><b>No emails yet</b>${L.slug ? "This lead hasn't been emailed." : "Build the site first; the first email is then queued."}</div>` : ""}
+          ${L.suppressed ? "" : `<div class="hr" style="margin:4px 0"></div>
+          <input class="in" id="rsub" value="${h(lastIn ? (lastIn.subject.startsWith("Re:") ? lastIn.subject : "Re: " + lastIn.subject) : "Re: a website for " + L.name)}">
+          <textarea class="in" id="rbody" rows="6" placeholder="Write a reply to ${h(L.name)}…"></textarea>
+          <div class="row" style="justify-content:space-between"><button class="btn sm danger ghost" id="optout">Mark do-not-contact</button><button class="btn primary" id="send">Send email</button></div>`}
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Details</h2><span class="muted small">Edits update the website on rebuild</span></div><div class="pb">
+          <div class="fields">
+            ${[["name", "Business name"], ["email", "Email"], ["phone", "Phone"], ["category", "Type (e.g. shop=bakery)"], ["address", "Address"], ["city", "Town"]].map(([k, l]) => `<label class="f">${l}<input class="in" data-f="${k}" value="${h(L[k])}"></label>`).join("")}
+            <label class="f full">Opening hours <span class="small">(e.g. Mo-Fr 09:00-17:00; Sa 10:00-14:00)</span><input class="in" data-f="opening_hours" value="${h(L.opening_hours)}"></label>
+            <label class="f full">Notes<textarea class="in" data-f="notes" rows="3" placeholder="Private notes — call history, what they asked for…">${h(L.notes)}</textarea></label>
+          </div>
+          <div class="row" style="justify-content:space-between;margin-top:12px"><span class="muted small">Theme: ${h(L.theme)} · Source: ${h(L.source)} · Added ${when(L.created_at)}</span>
+            <div class="row"><button class="btn" id="save">Save</button><button class="btn primary" id="saveb">Save & rebuild site</button></div></div>
+        </div></div>
+      </div>
+    </div>`;
+  view.querySelectorAll(".more").forEach((b) => b.addEventListener("click", () => { const p = $("#" + b.dataset.t); p.classList.toggle("clamp"); b.textContent = p.classList.contains("clamp") ? "Show more" : "Show less"; }));
+  // Desktop preview renders the site at a real 1280px width, scaled down to fit the panel.
+  const fitFrame = () => { const fw = $("#fw"), f = fw && fw.querySelector("iframe"); if (!f) return; const sc = fw.clientWidth / 1280; f.style.transform = `scale(${sc})`; f.style.height = fw.clientHeight / sc + "px"; };
+  fitFrame(); window.onresize = fitFrame;
+  view.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { view.querySelectorAll(".seg button").forEach((x) => x.classList.toggle("on", x === b)); $("#fw").classList.toggle("mobile", b.dataset.w === "mobile"); fitFrame(); }));
+  $("#status").addEventListener("change", (e) => guard(async () => { await api("/api/leads/" + id, { status: e.target.value }); toast("Status updated"); if (["opted_out", "bounced"].includes(e.target.value)) leadPage(id); }));
+  $("#rebuild").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, { rebuild: true }); toast("Website rebuilt"); leadPage(id); }));
+  const fields = () => Object.fromEntries([...view.querySelectorAll("[data-f]")].map((el) => [el.dataset.f, el.value]));
+  $("#save").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, fields()); toast("Saved"); }));
+  $("#saveb").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, { ...fields(), rebuild: true }); toast("Saved and rebuilt"); leadPage(id); }));
+  if (!L.suppressed) {
+    $("#send").addEventListener("click", (e) => guard(async () => {
+      e.target.disabled = true; e.target.innerHTML = '<span class="spin"></span> Sending';
+      try { await api(`/api/leads/${id}/reply`, { subject: $("#rsub").value, body: $("#rbody").value }); toast("Email sent"); leadPage(id); }
+      finally { e.target.disabled = false; e.target.textContent = "Send email"; }
+    }));
+    $("#optout").addEventListener("click", () => confirm(`Never email ${L.email} again?`) && guard(async () => { await api(`/api/leads/${id}/optout`, {}); toast("Added to do-not-contact list"); leadPage(id); }));
+  }
+}
+
+// ---------- Mailbox ----------
+async function mailPage(folder) {
+  setNav("mail", "mail-" + folder);
+  const items = await api("/api/mailbox?folder=" + folder);
+  const titles = { inbox: "Inbox", sent: "Sent", queued: "Queued" };
+  const sel = items.find((m) => String(m.id) === String(state.mailSel)) || items[0];
+  view.innerHTML = `
+    <div class="head"><div><h1>Mailbox</h1><p>${folder === "queued" ? "These go out on the next send (dry-run preview from the dashboard first)." : "Every email to and from your leads."}</p></div>
+      ${folder === "inbox" ? `<button class="btn" id="sync">Sync inbox</button>` : ""}</div>
+    <div class="panel"><div class="tabs">${Object.entries(titles).map(([k, t]) => `<a href="#/mail/${k}" class="${k === folder ? "on" : ""}">${t}</a>`).join("")}</div>
+      ${items.length ? `<div class="mail"><div class="list">${items.map((m) => `<div class="item ${sel && m.id === sel.id ? "on" : ""} ${folder === "inbox" && !m.is_read ? "unread" : ""}" data-id="${m.id}">
+          <div class="top"><span class="who">${h(folder === "inbox" ? m.name || m.from_addr : "To: " + (m.name || m.to_addr))}</span><span class="when">${when(m.created_at)}</span></div>
+          <div class="sj">${m.kind === "bounce" ? '<span class="tag bounce">bounce</span> ' : ""}${h(m.subject || "(no subject)")}</div><div class="sn">${h((m.body || "").replace(/\s+/g, " ").slice(0, 120))}</div></div>`).join("")}</div>
+        <div class="read" id="read"></div></div>`
+      : `<div class="empty"><b>Nothing in ${titles[folder].toLowerCase()}</b>${folder === "inbox" ? "Replies from leads appear here after syncing your inbox." : folder === "sent" ? "Emails you send (live) appear here." : "No leads are due an email right now."}</div>`}
+    </div>`;
+  const show = (m) => {
+    state.mailSel = m.id;
+    view.querySelectorAll(".item").forEach((el) => el.classList.toggle("on", el.dataset.id === String(m.id)));
+    $("#read").innerHTML = `<h2>${h(m.subject || "(no subject)")}</h2>
+      <div class="meta">${folder === "inbox" ? `From <b>${h(m.from_addr)}</b>` : `To <b>${h(m.to_addr)}</b>`}${m.created_at ? ` · ${h(when(m.created_at, true))}` : ""} · <a href="#/leads/${m.lead_id}">${h(m.name || "Open lead")} →</a></div>
+      <pre>${h(m.body)}</pre>
+      ${folder === "inbox" ? `<textarea class="in" id="qr" rows="5" placeholder="Quick reply…"></textarea><div class="row" style="justify-content:flex-end;margin-top:8px"><a class="btn" href="#/leads/${m.lead_id}">View lead & site</a><button class="btn primary" id="qrs">Send reply</button></div>` : `<a class="btn" href="#/leads/${m.lead_id}">View lead & site</a>`}`;
+    if (folder === "inbox" && !m.is_read) { m.is_read = 1; view.querySelector(`.item[data-id="${m.id}"]`).classList.remove("unread"); api(`/api/leads/${m.lead_id}/read`, {}).then(refreshBadge); }
+    const qrs = $("#qrs");
+    if (qrs) qrs.addEventListener("click", () => guard(async () => {
+      qrs.disabled = true;
+      try { await api(`/api/leads/${m.lead_id}/reply`, { subject: m.subject.startsWith("Re:") ? m.subject : "Re: " + m.subject, body: $("#qr").value }); toast("Reply sent"); $("#qr").value = ""; }
+      finally { qrs.disabled = false; }
+    }));
+  };
+  view.querySelectorAll(".item").forEach((el) => el.addEventListener("click", () => show(items.find((m) => String(m.id) === el.dataset.id))));
+  if (sel) show(sel);
+  const sync = $("#sync");
+  if (sync) sync.addEventListener("click", () => guard(async () => {
+    sync.disabled = true; sync.innerHTML = '<span class="spin"></span> Syncing';
+    await api("/api/actions/sync", {});
+    let job; do { await new Promise((r) => setTimeout(r, 1000)); job = await api("/api/job"); } while (job.running);
+    job.error ? toast(job.error, true) : toast(job.log.split("\n").pop() || "Synced");
+    refreshBadge(); mailPage(folder);
+  }));
+}
+
+// ---------- Websites ----------
+async function sitesPage() {
+  setNav("sites");
+  const rows = (await api("/api/leads")).filter((r) => r.slug);
+  view.innerHTML = `
+    <div class="head"><div><h1>Websites</h1><p>${rows.length} preview site${rows.length === 1 ? "" : "s"} built. Click one to open the lead.</p></div>
+      <input class="in" id="sq" placeholder="Filter…" style="max-width:260px"></div>
+    ${rows.length ? `<div class="gallery">${rows.map((r) => `<div class="panel site-card" data-n="${h((r.name + " " + r.city + " " + r.category).toLowerCase())}">
+        <div class="thumb" data-id="${r.id}"><iframe loading="lazy" tabindex="-1" src="/sites/${encodeURIComponent(r.slug)}/" title="${h(r.name)}"></iframe></div>
+        <div class="info"><div class="top"><span class="nm">${h(r.name)}</span>${pill(r.status)}</div>
+          <div class="row" style="justify-content:space-between"><span class="muted small">${h(cat(r.category))}${r.city ? " · " + h(r.city) : ""}</span>
+            <span class="row"><a class="btn sm" href="/sites/${encodeURIComponent(r.slug)}/" target="_blank" rel="noopener">Open ↗</a><a class="btn sm" href="#/leads/${r.id}">Lead</a></span></div></div></div>`).join("")}</div>`
+    : `<div class="panel"><div class="empty"><b>No websites yet</b>Find leads and click “Build” on the dashboard.</div></div>`}`;
+  const fit = () => view.querySelectorAll(".thumb").forEach((t) => { t.classList.add("fit"); t.style.setProperty("--s", t.clientWidth / 1280); });
+  fit(); window.onresize = fit;
+  view.querySelectorAll(".thumb").forEach((t) => t.addEventListener("click", () => (location.hash = "#/leads/" + t.dataset.id)));
+  const q = $("#sq"); if (q) q.addEventListener("input", () => view.querySelectorAll(".site-card").forEach((c) => (c.style.display = c.dataset.n.includes(q.value.toLowerCase()) ? "" : "none")));
+}
+
+// ---------- Router ----------
+async function route() {
+  const [path, qs] = (location.hash.slice(1) || "/").split("?");
+  const params = new URLSearchParams(qs || "");
+  window.onresize = null;
+  try {
+    let m;
+    if (path === "/" || path === "") await dashboard();
+    else if (path === "/leads") await leadsPage(params);
+    else if ((m = path.match(/^\/leads\/(\d+)$/))) await leadPage(+m[1]);
+    else if ((m = path.match(/^\/mail\/(inbox|sent|queued)$/))) await mailPage(m[1]);
+    else if (path === "/sites") await sitesPage();
+    else location.hash = "#/";
+  } catch (e) {
+    view.innerHTML = `<div class="panel"><div class="empty"><b>Something went wrong</b>${h(e.message)}</div></div>`;
+  }
+}
+window.addEventListener("hashchange", () => { state.mailSel = null; route(); });
+refreshBadge(); route();
+setInterval(refreshBadge, 60000);
+</script>
+</body>
+</html>

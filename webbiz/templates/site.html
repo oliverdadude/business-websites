@@ -3,76 +3,257 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>$name$in_location</title>
-<meta name="description" content="$name — $tagline">
+<title>$title</title>
+<meta name="description" content="$description">
+<meta property="og:title" content="$title">
+<meta property="og:description" content="$description">
+<meta name="theme-color" content="$hero_bg">
+<link rel="icon" href="data:image/svg+xml,$favicon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?$font_query&display=swap">
+<script type="application/ld+json">$schema</script>
 <style>
-  :root { --accent: $accent; --accent2: $accent2; --ink: #0f172a; --muted: #475569; --bg: #ffffff; --soft: #f8fafc; }
+  :root {
+    --accent: $accent; --accent-text: $accent_text; --on-accent: $on_accent; --hero-bg: $hero_bg; --hero-ink: $hero_ink;
+    --soft: $soft; --ink: $ink; --muted: $muted; --line: $line;
+    --display: "$display_font", Georgia, serif; --body: "$body_font", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --radius: 18px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 12px 32px -12px rgba(16,24,40,.18);
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); line-height: 1.6; }
-  a { color: var(--accent); }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
-  .preview-bar { background: var(--ink); color: #fff; font-size: 14px; text-align: center; padding: 8px 16px; }
-  .preview-bar a { color: var(--accent2); }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
-  .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; }
-  .logo { width: 42px; height: 42px; border-radius: 12px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 22px; }
-  nav a { margin-left: 20px; text-decoration: none; color: var(--muted); font-weight: 500; }
-  .hero { background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 60%, #000) 100%); color: #fff; padding: 88px 0 96px; }
-  .hero .eyebrow { display: inline-block; background: rgba(255,255,255,.15); padding: 4px 12px; border-radius: 999px; font-size: 14px; margin-bottom: 18px; }
-  .hero h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.1; margin: 0 0 16px; }
-  .hero p { font-size: 20px; max-width: 560px; opacity: .92; margin: 0 0 32px; }
-  .btn { display: inline-block; background: #fff; color: var(--accent); padding: 14px 26px; border-radius: 12px; font-weight: 700; text-decoration: none; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
-  .btn.ghost { background: transparent; color: #fff; border: 2px solid rgba(255,255,255,.6); box-shadow: none; margin-left: 10px; }
-  section { padding: 72px 0; }
-  h2 { font-size: 32px; margin: 0 0 24px; }
-  .cards { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
-  .cards li { background: var(--soft); border: 1px solid #e2e8f0; border-top: 4px solid var(--accent); border-radius: 14px; padding: 26px; font-weight: 600; font-size: 18px; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: var(--body); color: var(--ink); background: #fff; line-height: 1.65; font-size: 17px; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.12; margin: 0; letter-spacing: -0.01em; }
+  a { color: inherit; }
+  img, svg { display: block; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 15px 26px; border-radius: 999px; font-weight: 600; font-size: 16px; text-decoration: none; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 10px 24px -10px var(--accent); }
+  .btn-outline { border: 1.5px solid currentColor; color: inherit; opacity: .92; }
+
+  /* Preview notice (removed when the site is delivered) */
+  .preview-bar { background: #0b0f19; color: #e5e7eb; font: 500 14px/1.4 system-ui, sans-serif; text-align: center; padding: 10px 16px; }
+  .preview-bar a { color: #fff; font-weight: 700; }
+
+  /* Header */
+  header.site { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--hero-bg) 92%, transparent); backdrop-filter: saturate(1.4) blur(10px); color: var(--hero-ink); border-bottom: 1px solid color-mix(in srgb, var(--hero-ink) 10%, transparent); }
+  header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 72px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; font-family: var(--display); font-weight: 700; font-size: 20px; min-width: 0; }
+  .brand span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mark { flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-size: 19px; }
+  nav.links { display: flex; align-items: center; gap: 28px; font-size: 15px; font-weight: 500; }
+  nav.links a { text-decoration: none; opacity: .85; }
+  nav.links a:hover { opacity: 1; }
+  nav.links .btn { padding: 10px 18px; font-size: 15px; opacity: 1; }
+
+  /* Hero */
+  .hero { background: var(--hero-bg); color: var(--hero-ink); position: relative; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(900px 500px at 85% 10%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%), radial-gradient(600px 400px at 0% 100%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%); pointer-events: none; }
+  .hero .wrap { position: relative; display: grid; grid-template-columns: 1.25fr .9fr; gap: 56px; align-items: center; padding-top: 96px; padding-bottom: 120px; }
+  .hero h1 { font-size: clamp(42px, 6.4vw, 72px); margin-bottom: 20px; }
+  .hero .lede { font-size: 20px; max-width: 34ch; opacity: .88; margin: 0 0 34px; }
+  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .hero .eyebrow { color: inherit; opacity: .8; }
+  .card { background: #fff; color: var(--ink); border-radius: var(--radius); box-shadow: var(--shadow); padding: 28px; border: 1px solid var(--line); }
+  .info h3 { font-size: 22px; margin-bottom: 18px; }
+  .info ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+  .info li { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: center; font-size: 16px; }
+  .info li a { text-decoration: none; word-break: break-word; }
+  .info li a:hover { text-decoration: underline; }
+  .info small { display: block; color: var(--muted); font-size: 13px; }
+  .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, #fff); color: var(--accent-text); }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); width: 100%; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #9ca3af; }
+  .status.open .dot { background: #16a34a; box-shadow: 0 0 0 4px #16a34a22; }
+
+  /* Highlights */
+  .highlights { position: relative; margin-top: -48px; z-index: 2; }
+  .highlights ul { list-style: none; margin: 0; padding: 22px 28px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--line); }
+  .highlights li { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 16px; }
+  .highlights li svg { color: var(--accent-text); flex: none; }
+
+  section { padding: 104px 0; }
+  .section-head { max-width: 640px; margin-bottom: 52px; }
+  .section-head h2 { font-size: clamp(32px, 4.2vw, 46px); margin-bottom: 14px; }
+  .section-head p { color: var(--muted); font-size: 18px; margin: 0; }
+
+  /* Services */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .service { padding: 30px; border-radius: var(--radius); border: 1px solid var(--line); background: #fff; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+  .service:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: var(--shadow); transform: translateY(-2px); }
+  .service .ic { width: 52px; height: 52px; border-radius: 14px; margin-bottom: 20px; }
+  .service h3 { font-size: 21px; margin-bottom: 8px; }
+  .service p { margin: 0; color: var(--muted); font-size: 16px; }
+
+  /* About */
   .about { background: var(--soft); }
-  .about p { font-size: 18px; color: var(--muted); max-width: 720px; }
-  .contact { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px; }
-  .contact h3 { margin: 0 0 6px; font-size: 16px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-  .contact p { margin: 0 0 20px; font-size: 18px; }
-  footer { border-top: 1px solid #e2e8f0; padding: 28px 0; color: var(--muted); font-size: 14px; }
-  @media (max-width: 600px) { nav { display: none; } .btn.ghost { margin: 12px 0 0; } .hero { padding: 64px 0 72px; } }
+  .about .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; }
+  .about p { font-size: 19px; color: var(--muted); margin: 0 0 18px; }
+  .about .panel { aspect-ratio: 5 / 4; border-radius: 28px; background: var(--hero-bg); color: var(--hero-ink); position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 36px; }
+  .about .panel::before { content: ""; position: absolute; inset: 0; background: radial-gradient(500px 300px at 100% 0%, color-mix(in srgb, var(--accent) 45%, transparent), transparent 70%); }
+  .about .panel .big { position: absolute; top: 12px; right: 30px; font-family: var(--display); font-size: 220px; line-height: 1; opacity: .14; }
+  .about .panel strong { position: relative; font-family: var(--display); font-size: 30px; line-height: 1.15; }
+  .about .panel span { position: relative; opacity: .8; margin-top: 8px; }
+
+  /* Visit */
+  .visit-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 28px; align-items: stretch; }
+  .hours table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  .hours td { padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .hours td:last-child { text-align: right; color: var(--muted); }
+  .hours tr:last-child td { border-bottom: 0; }
+  .hours tr.today td { font-weight: 700; color: var(--ink); }
+  .hours .raw { color: var(--muted); margin: 0; }
+  .map { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); min-height: 360px; background: var(--soft); }
+  .map iframe { width: 100%; height: 100%; min-height: 360px; border: 0; display: block; }
+  .map .nomap { height: 100%; display: grid; place-items: center; text-align: center; padding: 32px; color: var(--muted); }
+
+  /* CTA */
+  .cta { padding: 0 0 104px; }
+  .cta .box { background: var(--hero-bg); color: var(--hero-ink); border-radius: 28px; padding: 64px; display: flex; align-items: center; justify-content: space-between; gap: 32px; flex-wrap: wrap; position: relative; overflow: hidden; }
+  .cta .box::before { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 300px at 100% 100%, color-mix(in srgb, var(--accent) 35%, transparent), transparent 70%); }
+  .cta h2 { font-size: clamp(30px, 4vw, 42px); position: relative; max-width: 18ch; }
+  .cta .btn { position: relative; }
+
+  footer.site { border-top: 1px solid var(--line); padding: 36px 0 44px; color: var(--muted); font-size: 15px; }
+  footer.site .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer.site a { text-decoration: none; }
+
+  .callbar { display: none; }
+
+  @media (max-width: 920px) {
+    .hero .wrap, .about .wrap, .visit-grid { grid-template-columns: 1fr; }
+    .hero .wrap { padding-top: 64px; padding-bottom: 96px; gap: 40px; }
+    .grid { grid-template-columns: 1fr 1fr; }
+    .about .wrap { gap: 40px; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding-bottom: 76px; }
+    nav.links a:not(.btn) { display: none; }
+    .grid, .highlights ul { grid-template-columns: 1fr; }
+    section { padding: 72px 0; }
+    .cta .box { padding: 40px 28px; }
+    .about .panel .big { font-size: 160px; }
+    .callbar { display: flex; position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 30; justify-content: center; }
+    .callbar .btn { width: 100%; justify-content: center; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
 </style>
 </head>
-<body class="theme-$kind">
-<div class="preview-bar">This is a free preview made for $name by $studio. Like it? <a href="mailto:$studio_email?subject=Website%20for%20$name">Let's make it yours</a>.</div>
-<div class="wrap">
-  <header>
-    <div class="brand"><div class="logo">$initial</div>$name</div>
-    <nav><a href="#services">Services</a><a href="#about">About</a><a href="#contact">Contact</a></nav>
-  </header>
-</div>
-<div class="hero">
+<body>
+$preview_bar
+<header class="site">
   <div class="wrap">
-    <span class="eyebrow">$category$in_location</span>
-    <h1>$name</h1>
-    <p>$tagline</p>
-    <a class="btn" href="$cta_href">$cta</a><a class="btn ghost" href="#contact">Find us</a>
+    <a class="brand" href="#top"><div class="mark">$initial</div><span>$name</span></a>
+    <nav class="links">
+      <a href="#services">Services</a><a href="#about">About</a><a href="#visit">Visit</a>
+      <a class="btn btn-primary" href="$cta_href">$cta_short</a>
+    </nav>
   </div>
-</div>
-<section id="services"><div class="wrap">
-  <h2>What we offer</h2>
-  <ul class="cards">$services</ul>
-</div></section>
-<section id="about" class="about"><div class="wrap">
-  <h2>About us</h2>
-  <p>$name is a locally owned business$in_location. We take pride in looking after every customer personally, and we'd love to welcome you. Get in touch any time — we're happy to help.</p>
-</div></section>
-<section id="contact"><div class="wrap">
-  <h2>Get in touch</h2>
-  <div class="contact">
+</header>
+
+<main id="top">
+<section class="hero" style="padding:0">
+  <div class="wrap">
     <div>
-      <h3>Email</h3><p><a href="mailto:$email">$email</a></p>
-      $phone
+      <div class="eyebrow">$eyebrow</div>
+      <h1>$name</h1>
+      <p class="lede">$tagline</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="$cta_href">$cta_icon $cta</a>
+        <a class="btn btn-outline" href="#visit">Find us</a>
+      </div>
     </div>
+    <aside class="card info" aria-label="Contact details">
+      <h3>Get in touch</h3>
+      <ul>$contact_items</ul>
+      $status_line
+    </aside>
+  </div>
+</section>
+
+<div class="highlights"><div class="wrap"><ul>$highlights</ul></div></div>
+
+<section id="services">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">What we do</div>
+      <h2>$services_title</h2>
+      <p>$services_intro</p>
+    </div>
+    <div class="grid">$services</div>
+  </div>
+</section>
+
+<section id="about" class="about">
+  <div class="wrap">
     <div>
-      <h3>Address</h3><p>$address<br><a href="$map_url" target="_blank" rel="noopener">View on map →</a></p>
-      $hours
+      <div class="eyebrow">About us</div>
+      <h2 style="font-size:clamp(32px,4.2vw,46px);margin-bottom:22px">A local business that cares</h2>
+      <p>$about</p>
+      <p>We'd love to hear from you — call, email or drop by.</p>
+    </div>
+    <div class="panel" aria-hidden="true">
+      <div class="big">$initial</div>
+      <strong>$name</strong>
+      <span>$panel_line</span>
     </div>
   </div>
-</div></section>
-<footer><div class="wrap">© $name. Website by $studio.</div></footer>
+</section>
+
+<section id="visit">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Visit</div>
+      <h2>Opening hours &amp; location</h2>
+      <p>$address_line</p>
+    </div>
+    <div class="visit-grid">
+      <div class="card hours">
+        <h3 style="font-size:22px;margin-bottom:12px">Opening hours</h3>
+        $hours
+      </div>
+      <div class="map">$map</div>
+    </div>
+  </div>
+</section>
+
+<section class="cta" style="padding-top:0">
+  <div class="wrap">
+    <div class="box">
+      <h2>$cta_heading</h2>
+      <a class="btn btn-primary" href="$cta_href">$cta_icon $cta</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>© <span id="yr"></span> $name$footer_location</span>
+    <span>$credit</span>
+  </div>
+</footer>
+<div class="callbar"><a class="btn btn-primary" href="$cta_href">$cta_icon $cta</a></div>
+
+<script>
+  document.getElementById("yr").textContent = new Date().getFullYear();
+  (function () {
+    var hours = $hours_json; if (!hours) return;
+    var idx = (new Date().getDay() + 6) % 7, row = document.querySelector('.hours tr[data-day="' + idx + '"]');
+    if (row) row.classList.add("today");
+    var el = document.getElementById("open-status"); if (!el) return;
+    var today = hours[idx], now = new Date(), mins = now.getHours() * 60 + now.getMinutes(), open = false;
+    if (today === "Open 24 hours") open = true;
+    else (today.match(/\d{1,2}:\d{2} – \d{1,2}:\d{2}/g) || []).forEach(function (r) {
+      var p = r.split(" – ").map(function (t) { var x = t.split(":"); return +x[0] * 60 + +x[1]; });
+      if (p[1] <= p[0]) p[1] += 1440;
+      if (mins >= p[0] && mins < p[1]) open = true;
+    });
+    el.classList.toggle("open", open);
+    el.lastChild.textContent = open ? "Open now · " + today : (today === "Closed" ? "Closed today" : "Closed now · Today " + today);
+  })();
+</script>
 </body>
 </html>

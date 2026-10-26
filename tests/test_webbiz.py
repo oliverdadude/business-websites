@@ -1,12 +1,17 @@
 import email
+import json
+import re
 import tempfile
+import threading
+import urllib.error
+import urllib.request
 import unittest
 from datetime import timedelta
 from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
 
-from webbiz import config, db, importer, outreach, prospect, sitegen
+from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, sitegen
 
 
 def make_cfg(**over):
@@ -97,15 +102,45 @@ class SiteTests(Base):
         lead = self.conn.execute("SELECT * FROM leads").fetchone()
         self.assertEqual(lead["status"], "site_built")
         page = (Path(self.tmp.name) / "sites" / lead["slug"] / "index.html").read_text()
-        self.assertIn("Tom &amp; &lt;Jerry&gt; Cuts", page)
-        self.assertNotIn("<Jerry>", page)
-        self.assertIn("#be185d", page)  # beauty theme
-        self.assertIn("mailto:t@j.test", page)  # no phone -> email CTA
-        self.assertNotIn("$", page.replace("$$", ""))  # every placeholder filled
+        self.assertTrue("Tom &amp; &lt;Jerry&gt; Cuts" in page)
+        self.assertFalse("<Jerry>" in page)  # escaped everywhere, including the JSON-LD block
+        self.assertTrue("Cormorant Garamond" in page)  # beauty theme fonts
+        self.assertTrue('href="mailto:t@j.test"' in page)  # no phone -> email CTA
+        self.assertTrue("preview-bar" in page)
+        self.assertFalse(re.search(r"\$[a-z_]", page))  # every placeholder filled
 
-    def test_theme_fallback(self):
-        self.assertEqual(sitegen.theme_for("shop=bicycle")["kind"], "auto")
-        self.assertEqual(sitegen.theme_for("shop=antiques")["kind"], "shop")
+    def test_final_render_drops_preview_bar_and_shows_hours_and_map(self):
+        lead = {"id": 1, "name": "Rosa's", "email": "r@x.test", "category": "shop=bakery", "phone": "+1 555 0100",
+                "city": "Bend", "address": "1 Oak St", "opening_hours": "Mo-Fr 07:00-15:00", "lat": 44.0, "lon": -121.0}
+        page = sitegen.render(lead, self.cfg, final=True)
+        self.assertFalse('class="preview-bar"' in page)
+        self.assertTrue('href="tel:+15550100"' in page)
+        self.assertTrue('<tr data-day="0"><td>Monday</td><td>07:00 – 15:00</td></tr>' in page)
+        self.assertTrue("openstreetmap.org/export/embed.html" in page)
+
+    def test_theme_matching(self):
+        cases = {"shop=bicycle": "auto", "shop=antiques": "shop", "shop=carpet": "shop", "craft=plumber": "trades",
+                 "craft=beekeeper": "trades", "office=it": "professional", "shop=kitchen": "shop",
+                 "Hair Salon": "beauty", "Car repair": "auto", "plumbing": "trades", "amenity=bar": "food",
+                 "leisure=fitness_centre": "fitness", "tourism=guest_house": "stay", "": "shop"}
+        for category, kind in cases.items():
+            self.assertEqual(sitegen.theme_for(category)["kind"], kind, category)
+
+
+class HoursTests(unittest.TestCase):
+    def test_parse(self):
+        week = hours.parse("Mo-Fr 07:00-15:00; Sa 08:00-12:00; Su off")
+        self.assertEqual(week[0], ("Monday", "07:00 – 15:00"))
+        self.assertEqual(week[5], ("Saturday", "08:00 – 12:00"))
+        self.assertEqual(week[6], ("Sunday", "Closed"))
+        self.assertEqual(hours.parse("24/7")[3], ("Thursday", "Open 24 hours"))
+        self.assertEqual(hours.parse("Fr-Mo 10:00-22:00")[0][1], "10:00 – 22:00")  # wraps the week
+        self.assertEqual(hours.parse("Fr-Mo 10:00-22:00")[2][1], "Closed")
+        self.assertEqual(hours.parse("Mo 09:00-12:00,13:00-17:00; PH off")[0][1], "09:00 – 12:00, 13:00 – 17:00")
+
+    def test_unparseable_returns_none(self):
+        for text in ("", None, "sunrise-sunset", "Mo-Sa 09:00-18:00; Jan off", "by appointment"):
+            self.assertIsNone(hours.parse(text), text)
 
 
 class OutreachTests(Base):
@@ -148,6 +183,8 @@ class OutreachTests(Base):
             self.conn.execute("UPDATE leads SET last_emailed_at=?", (old,))
             self.assertEqual(outreach.send(self.conn, self.cfg, live=True, **quiet), 0)  # max 2 per lead
         self.assertEqual(smtp.return_value.send_message.call_count, 3)
+        kinds = [r[0] for r in self.conn.execute("SELECT kind FROM messages WHERE direction='out' ORDER BY id")]
+        self.assertEqual(kinds, ["outreach", "outreach", "followup"])
 
     def test_daily_limit(self):
         self.cfg["daily_send_limit"] = 1
@@ -183,6 +220,139 @@ class OutreachTests(Base):
                                                "could not deliver to rosa@gmail.com"), leads),
                          ("rosa@gmail.com", "bounced"))
         self.assertIsNone(outreach.classify(msg("other@x.test", "hi", "hello"), leads))
+
+
+def raw_email(frm, subject, body, msg_id="<m1@x.test>"):
+    m = EmailMessage()
+    m["From"], m["Subject"], m["Message-ID"], m["Date"] = frm, subject, msg_id, "Mon, 26 Oct 2026 10:00:00 +0000"
+    m.set_content(body)
+    return bytes(m)
+
+
+class MailboxTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.find()
+        sitegen.build(self.conn, self.cfg, Path(self.tmp.name) / "sites")
+        with mock.patch.object(outreach.smtplib, "SMTP"):
+            outreach.send(self.conn, self.cfg, live=True, log=lambda *a: None, sleep=lambda s: None)
+        self.leads = {r["email"].lower(): r for r in self.conn.execute("SELECT * FROM leads")}
+
+    def test_ingest_stores_reply_once_and_updates_status(self):
+        raw = raw_email("Rosa <rosa@gmail.com>", "Re: website", "Yes please!")
+        self.assertEqual(outreach.ingest(self.conn, raw, self.leads), "replied")
+        self.assertIsNone(outreach.ingest(self.conn, raw, self.leads))  # same Message-ID: ignored
+        row = self.conn.execute("SELECT * FROM messages WHERE direction='in'").fetchone()
+        self.assertEqual((row["body"], row["is_read"], row["kind"]), ("Yes please!", 0, "inbound"))
+        self.assertEqual(self.conn.execute("SELECT status FROM leads WHERE email='rosa@gmail.com'").fetchone()[0], "replied")
+
+    def test_resync_does_not_override_manual_status(self):
+        raw = raw_email("rosa@gmail.com", "Re: website", "Yes please!")
+        outreach.ingest(self.conn, raw, self.leads)
+        self.conn.execute("UPDATE leads SET status='won' WHERE email='rosa@gmail.com'")
+        outreach.ingest(self.conn, raw, self.leads)
+        self.assertEqual(self.conn.execute("SELECT status FROM leads WHERE email='rosa@gmail.com'").fetchone()[0], "won")
+
+    def test_optout_reply_suppresses(self):
+        outreach.ingest(self.conn, raw_email("rosa@gmail.com", "Re: website", "please remove me"), self.leads)
+        self.assertTrue(db.is_suppressed(self.conn, "rosa@gmail.com"))
+
+    def test_send_reply_threads_and_records(self):
+        outreach.ingest(self.conn, raw_email("rosa@gmail.com", "Re: website", "How much?", "<abc@x.test>"), self.leads)
+        lead = self.conn.execute("SELECT * FROM leads WHERE email='rosa@gmail.com'").fetchone()
+        with mock.patch.object(outreach.smtplib, "SMTP") as smtp:
+            msg = outreach.send_reply(self.conn, self.cfg, lead, "Re: website", "It's $299.")
+        smtp.return_value.send_message.assert_called_once()
+        self.assertEqual(msg["In-Reply-To"], "<abc@x.test>")
+        self.assertEqual(outreach.sent_today(self.conn), 2)  # manual replies don't use the cold-email budget
+
+    def test_sync_searches_from_first_email(self):
+        box = mock.MagicMock()
+        box.__enter__.return_value = box
+        box.search.return_value = ("OK", [b"1"])
+        box.fetch.return_value = ("OK", [(b"1", raw_email("rosa@gmail.com", "Re", "Sounds good"))])
+        self.cfg["imap"]["host"] = "imap.test"
+        with mock.patch.object(outreach.imaplib, "IMAP4_SSL", return_value=box):
+            self.assertEqual(outreach.sync_replies(self.conn, self.cfg, log=lambda *a: None), {"rosa@gmail.com": "replied"})
+
+
+class AdminTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.cfg.update(db_path=str(Path(self.tmp.name) / "t.db"), sites_dir=str(Path(self.tmp.name) / "sites"))
+        demo.seed(self.conn, self.cfg, self.cfg["sites_dir"])
+        self.app = admin.App(self.cfg)
+
+    def call(self, method, path, body=None, query=None):
+        return self.app.route(method, path, query or {}, body or {})
+
+    def test_stats_leads_and_mailbox(self):
+        stats = self.call("GET", "/api/stats")
+        self.assertEqual(stats["total"], len(demo.LEADS))
+        self.assertEqual(stats["unread"], 2)
+        self.assertEqual(len(self.call("GET", "/api/leads", query={"q": "bakery"})), 1)
+        inbox = self.call("GET", "/api/mailbox", query={"folder": "inbox"})
+        self.assertEqual({m["name"] for m in inbox}, {"Rosa's Bakery", "Luna Hair Studio", "Quick Fix Auto"})
+        queued = self.call("GET", "/api/mailbox", query={"folder": "queued"})
+        kinds = {m["name"]: m["kind"] for m in queued}
+        self.assertEqual(kinds["Riverside Dental"], "outreach")  # site built, never emailed
+        self.assertEqual(kinds["Hartley & Co Accountants"], "followup")  # emailed 6 days ago, no reply
+        self.assertNotIn("Rosa's Bakery", kinds)  # replied: never auto-emailed again
+
+    def test_lead_detail_edit_rebuild_and_read(self):
+        lead_id = self.conn.execute("SELECT id FROM leads WHERE name=\"Rosa's Bakery\"").fetchone()[0]
+        d = self.call("GET", f"/api/leads/{lead_id}")
+        self.assertEqual(d["lead"]["theme"], "food")
+        self.assertEqual([m["direction"] for m in d["messages"]], ["out", "in"])
+        self.call("POST", f"/api/leads/{lead_id}", {"phone": "999 111", "rebuild": True, "evil": "x"})
+        page = (Path(self.cfg["sites_dir"]) / d["lead"]["slug"] / "index.html").read_text()
+        self.assertTrue("999 111" in page)
+        self.call("POST", f"/api/leads/{lead_id}/read")
+        self.assertEqual(self.call("GET", "/api/stats")["unread"], 1)
+
+    def test_status_opted_out_suppresses(self):
+        lead_id = self.conn.execute("SELECT id FROM leads WHERE name='Riverside Dental'").fetchone()[0]
+        self.call("POST", f"/api/leads/{lead_id}", {"status": "opted_out"})
+        self.assertTrue(self.call("GET", f"/api/leads/{lead_id}")["lead"]["suppressed"])
+
+    def test_actions_run_in_background(self):
+        job = self.call("POST", "/api/actions/send", {"live": False})
+        self.assertEqual(job["name"], "send")
+        for _ in range(100):
+            job = self.app.job_status()
+            if not job["running"]:
+                break
+            threading.Event().wait(0.05)
+        self.assertEqual(job["error"], "")
+        self.assertTrue("[dry run]" in job["log"])
+        with self.assertRaises(ValueError):
+            self.call("POST", "/api/actions/find", {"area": " "})
+
+    def test_http_guards(self):
+        server = admin.ThreadingHTTPServer(("127.0.0.1", 0), admin.make_handler(self.app))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            def status(path, method="GET", headers=None):
+                req = urllib.request.Request(base + path, method=method, data=b"{}" if method == "POST" else None,
+                                             headers=headers or {})
+                try:
+                    return urllib.request.urlopen(req).status
+                except urllib.error.HTTPError as exc:
+                    return exc.code
+            self.assertEqual(status("/"), 200)
+            self.assertEqual(status("/api/actions/send", "POST"), 403)  # no CSRF header
+            self.assertEqual(status("/sites/%2e%2e/t.db"), 404)  # no path traversal
+            slug = self.conn.execute("SELECT slug FROM leads LIMIT 1").fetchone()[0]
+            self.assertEqual(status(f"/sites/{slug}/"), 200)
+            self.app.password = "s3cret"
+            self.assertEqual(status("/api/stats"), 401)
+            import base64
+            auth = {"Authorization": "Basic " + base64.b64encode(b"admin:s3cret").decode()}
+            self.assertEqual(status("/api/stats", headers=auth), 200)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
