@@ -20,10 +20,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import config, db, outreach, prospect, publish, sitegen
+from . import config, db, outreach, prospect, publish, replies, sitegen
 
 PAGE = Path(__file__).parent / "templates" / "admin.html"
 LEAD_FIELDS = ("name", "email", "category", "phone", "address", "city", "opening_hours", "notes")
+
+
+def _has_anthropic():
+    try:
+        import anthropic  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _rows(cur):
@@ -56,7 +64,10 @@ class App:
             "queue": len(outreach.queue(conn, self.cfg)), "recent": recent,
             "ready": outreach.check_ready(self.cfg), "imap": bool(self.cfg["imap"]["host"]),
             "business_name": self.cfg["business_name"], "publish": publish.can_publish(self.cfg),
-            "configured": self.cfg["configured"],
+            "configured": self.cfg["configured"], "needs_reply": replies.pending(conn),
+            "needs_you": conn.execute("SELECT COUNT(*) FROM messages WHERE direction='in' AND "
+                                      "reply_state='needs_you'").fetchone()[0],
+            "reply_mode": self.cfg["reply_mode"], "ai": replies.ai_available(self.cfg),
         }
 
     def leads(self, conn, q):
@@ -93,6 +104,11 @@ class App:
 
     def mailbox(self, conn, q):
         folder = q.get("folder", "inbox")
+        if folder == "todo":
+            return _rows(conn.execute(
+                "SELECT m.*, l.name FROM messages m JOIN leads l ON l.id=m.lead_id WHERE m.direction='in' AND "
+                "m.reply_state IN ('needs_you','needs_reply') ORDER BY m.reply_state='needs_you' DESC, "
+                "m.created_at DESC"))
         if folder == "queued":
             items = []
             for lead, step in outreach.queue(conn, self.cfg):
@@ -132,8 +148,16 @@ class App:
         row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
         if not body.get("body", "").strip():
             raise ValueError("Write a message first.")
+        if db.is_suppressed(conn, row["email"]):
+            raise ValueError("This address is on your do-not-contact list.")
         outreach.send_reply(conn, self.cfg, row, body.get("subject") or f"Re: website for {row['name']}", body["body"])
         return self.lead(conn, lead_id)
+
+    def dismiss(self, conn, message_id):
+        conn.execute("UPDATE messages SET reply_state='dismissed', is_read=1 WHERE id=? AND direction='in'",
+                     (message_id,))
+        conn.commit()
+        return {"ok": True}
 
     def optout(self, conn, lead_id):
         row = conn.execute("SELECT email FROM leads WHERE id=?", (lead_id,)).fetchone()
@@ -184,9 +208,14 @@ class App:
 
     # ---- Settings -----------------------------------------------------------------------
     SETTINGS = ("business_name", "your_name", "reply_to_email", "phone", "postal_address", "preview_base_url",
-                "price_setup", "price_monthly", "daily_send_limit", "followup_after_days", "max_emails_per_lead")
+                "price_setup", "price_monthly", "daily_send_limit", "followup_after_days", "max_emails_per_lead",
+                "reply_mode", "payment_link", "turnaround_days", "included", "reply_faq", "auto_sync_minutes",
+                "notify_needs_you")
     NUMBERS = {"price_setup": (0, 100000), "price_monthly": (0, 10000), "daily_send_limit": (1, 500),
-               "followup_after_days": (1, 60), "max_emails_per_lead": (1, 2)}
+               "followup_after_days": (1, 60), "max_emails_per_lead": (1, 2), "turnaround_days": (1, 60),
+               "auto_sync_minutes": (0, 1440)}
+    CHOICES = {"reply_mode": ("review", "auto")}
+    BOOLS = ("notify_needs_you",)
 
     def settings(self):
         smtp, imap = self.cfg["smtp"], self.cfg["imap"]
@@ -195,6 +224,8 @@ class App:
             "email": {"smtp_host": smtp["host"], "smtp_port": smtp["port"], "smtp_user": smtp["user"],
                       "imap_host": imap["host"], "has_password": bool(smtp["password"])},
             "netlify": {"has_token": bool(self.cfg["netlify_token"]), "site_id": self.cfg["netlify_site_id"]},
+            "ai": {"has_key": bool(self.cfg["anthropic_api_key"]), "ready": replies.ai_available(self.cfg),
+                   "package": _has_anthropic()},
             "configured": self.cfg["configured"], "ready": outreach.check_ready(self.cfg),
             "steps": {
                 "business": bool(self.cfg["configured"] and self.cfg["postal_address"]
@@ -215,7 +246,12 @@ class App:
         for key, value in (body.get("settings") or {}).items():
             if key not in self.SETTINGS:
                 continue
-            if key in self.NUMBERS:
+            if key in self.CHOICES:
+                if value not in self.CHOICES[key]:
+                    raise ValueError(f"{key.replace('_', ' ')} must be one of {', '.join(self.CHOICES[key])}")
+            elif key in self.BOOLS:
+                value = value in (True, "true", "1", 1, "on")
+            elif key in self.NUMBERS:
                 lo, hi = self.NUMBERS[key]
                 try:
                     value = int(value)
@@ -242,6 +278,10 @@ class App:
             secrets["SMTP_PASS"] = email["password"].replace(" ", "")  # Gmail shows app passwords in groups
         if "smtp_user" in email:
             secrets["SMTP_FROM"] = values.get("reply_to_email") or self.cfg["reply_to_email"]
+        if (body.get("ai") or {}).get("api_key"):
+            secrets["ANTHROPIC_API_KEY"] = body["ai"]["api_key"].strip()
+        if (body.get("ai") or {}).get("remove_key"):
+            secrets["ANTHROPIC_API_KEY"] = ""
         if (body.get("netlify") or {}).get("token"):
             secrets["NETLIFY_TOKEN"] = body["netlify"]["token"].strip()
         config.save(values or {"business_name": self.cfg["business_name"]}, secrets)
@@ -258,6 +298,15 @@ class App:
                 if not (self.cfg["imap"]["host"] and self.cfg["imap"]["password"]):
                     raise ValueError("Fill in your email account details and save first.")
                 return {"message": f"Inbox connected ({outreach.test_imap(self.cfg)} messages)."}
+            if name == "test-ai":
+                if not replies.ai_available(self.cfg):
+                    raise ValueError("Install the anthropic package and save an API key first.")
+                lead = {"id": 0, "name": "Rosa's Bakery", "email": "rosa@example.com", "category": "shop=bakery",
+                        "city": "Bend", "status": "contacted", "slug": "rosas-bakery-1"}
+                inbound = {"subject": "Re: I made a website for Rosa's Bakery",
+                           "body": "Looks lovely! Do I own the web address, and could you add our cake menu?"}
+                result = replies.classify_ai(self.cfg, lead, [], inbound)
+                return {"message": "AI is working.", "sample": inbound["body"], **result}
             if name == "connect-netlify":
                 if not self.cfg["netlify_token"]:
                     raise ValueError("Paste your Netlify token and save first.")
@@ -289,6 +338,8 @@ class App:
             elif method == "POST":
                 if m := re.fullmatch(r"/api/leads/(\d+)", path):
                     return self.update_lead(conn, int(m[1]), body)
+                if m := re.fullmatch(r"/api/messages/(\d+)/dismiss", path):
+                    return self.dismiss(conn, int(m[1]))
                 if m := re.fullmatch(r"/api/leads/(\d+)/(read|reply|optout)", path):
                     lead_id = int(m[1])
                     return {"read": lambda: self.mark_read(conn, lead_id), "reply": lambda: self.reply(conn, lead_id, body),
@@ -418,9 +469,24 @@ def serve(cfg, host="127.0.0.1", port=8080, open_browser=False):
     print(f"webbiz admin running at {url}  (leave this window open; Ctrl+C to stop)")
     if open_browser:
         threading.Timer(0.8, webbrowser.open, args=(url,)).start()
+    threading.Thread(target=_auto_sync, args=(app,), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         httpd.server_close()
+
+
+def _auto_sync(app):
+    """While the dashboard runs, check the inbox every `auto_sync_minutes` so replies are handled promptly."""
+    import time
+    while True:
+        minutes = app.cfg["auto_sync_minutes"]
+        time.sleep(max(minutes, 1) * 60)
+        if not minutes or not app.cfg["imap"]["host"] or not app.cfg["imap"]["password"]:
+            continue
+        try:
+            app.start_action("sync", {})
+        except RuntimeError:
+            pass  # another action is running; try again next time

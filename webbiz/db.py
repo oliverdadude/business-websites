@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_lead ON messages(lead_id, created_at);
 """
 
+# Columns added after the first release; added to existing databases on connect.
+# reply_state for inbound mail: needs_reply | needs_you | auto_sent | replied | no_reply | dismissed
+MIGRATIONS = {
+    "messages": [("intent", "TEXT DEFAULT ''"), ("summary", "TEXT DEFAULT ''"), ("needs_human", "TEXT DEFAULT ''"),
+                 ("draft_subject", "TEXT DEFAULT ''"), ("draft_body", "TEXT DEFAULT ''"),
+                 ("reply_state", "TEXT DEFAULT ''"), ("engine", "TEXT DEFAULT ''")],
+}
+
 # Lead lifecycle: new -> site_built -> contacted -> (replied | opted_out | bounced | won | lost)
 STATUSES = ("new", "site_built", "contacted", "replied", "opted_out", "bounced", "won", "lost", "skipped")
 
@@ -60,6 +68,12 @@ def connect(path):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    for table, columns in MIGRATIONS.items():
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    conn.commit()
     return conn
 
 

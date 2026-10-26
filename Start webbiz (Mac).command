@@ -6,4 +6,6 @@ if ! command -v python3 >/dev/null 2>&1; then
   read -r -p "Press Enter to close."
   exit 1
 fi
+# Optional AI replies: install quietly if possible (everything else works without it).
+python3 -c "import anthropic" 2>/dev/null || python3 -m pip install --quiet --user anthropic >/dev/null 2>&1
 python3 -m webbiz admin --open

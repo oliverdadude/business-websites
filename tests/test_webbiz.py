@@ -15,7 +15,7 @@ import io
 import os
 import zipfile
 
-from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, publish, sitegen
+from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, publish, replies, sitegen
 
 
 def make_cfg(**over):
@@ -244,25 +244,25 @@ class MailboxTests(Base):
 
     def test_ingest_stores_reply_once_and_updates_status(self):
         raw = raw_email("Rosa <rosa@gmail.com>", "Re: website", "Yes please!")
-        self.assertEqual(outreach.ingest(self.conn, raw, self.leads), "replied")
-        self.assertIsNone(outreach.ingest(self.conn, raw, self.leads))  # same Message-ID: ignored
+        self.assertEqual(outreach.ingest(self.conn, self.cfg, raw, self.leads), "replied")
+        self.assertIsNone(outreach.ingest(self.conn, self.cfg, raw, self.leads))  # same Message-ID: ignored
         row = self.conn.execute("SELECT * FROM messages WHERE direction='in'").fetchone()
         self.assertEqual((row["body"], row["is_read"], row["kind"]), ("Yes please!", 0, "inbound"))
         self.assertEqual(self.conn.execute("SELECT status FROM leads WHERE email='rosa@gmail.com'").fetchone()[0], "replied")
 
     def test_resync_does_not_override_manual_status(self):
         raw = raw_email("rosa@gmail.com", "Re: website", "Yes please!")
-        outreach.ingest(self.conn, raw, self.leads)
+        outreach.ingest(self.conn, self.cfg, raw, self.leads)
         self.conn.execute("UPDATE leads SET status='won' WHERE email='rosa@gmail.com'")
-        outreach.ingest(self.conn, raw, self.leads)
+        outreach.ingest(self.conn, self.cfg, raw, self.leads)
         self.assertEqual(self.conn.execute("SELECT status FROM leads WHERE email='rosa@gmail.com'").fetchone()[0], "won")
 
     def test_optout_reply_suppresses(self):
-        outreach.ingest(self.conn, raw_email("rosa@gmail.com", "Re: website", "please remove me"), self.leads)
+        outreach.ingest(self.conn, self.cfg, raw_email("rosa@gmail.com", "Re: website", "please remove me"), self.leads)
         self.assertTrue(db.is_suppressed(self.conn, "rosa@gmail.com"))
 
     def test_send_reply_threads_and_records(self):
-        outreach.ingest(self.conn, raw_email("rosa@gmail.com", "Re: website", "How much?", "<abc@x.test>"), self.leads)
+        outreach.ingest(self.conn, self.cfg, raw_email("rosa@gmail.com", "Re: website", "How much?", "<abc@x.test>"), self.leads)
         lead = self.conn.execute("SELECT * FROM leads WHERE email='rosa@gmail.com'").fetchone()
         with mock.patch.object(outreach.smtplib, "SMTP") as smtp:
             msg = outreach.send_reply(self.conn, self.cfg, lead, "Re: website", "It's $299.")
@@ -293,15 +293,21 @@ class AdminTests(Base):
     def test_stats_leads_and_mailbox(self):
         stats = self.call("GET", "/api/stats")
         self.assertEqual(stats["total"], len(demo.LEADS))
-        self.assertEqual(stats["unread"], 2)
+        self.assertEqual(stats["unread"], 4)
+        self.assertEqual(stats["needs_reply"], 2)  # Rosa (timeline question) + Hartley (who are you)
         self.assertEqual(len(self.call("GET", "/api/leads", query={"q": "bakery"})), 1)
         inbox = self.call("GET", "/api/mailbox", query={"folder": "inbox"})
-        self.assertEqual({m["name"] for m in inbox}, {"Rosa's Bakery", "Luna Hair Studio", "Quick Fix Auto"})
+        self.assertEqual({m["name"] for m in inbox}, {"Rosa's Bakery", "Luna Hair Studio", "Quick Fix Auto",
+                                                      "Hartley & Co Accountants", "Riverside Dental"})
+        todo = self.call("GET", "/api/mailbox", query={"folder": "todo"})
+        self.assertEqual({m["intent"] for m in todo}, {"timeline", "who_are_you"})
+        self.assertTrue(all(m["draft_body"] for m in todo))
         queued = self.call("GET", "/api/mailbox", query={"folder": "queued"})
         kinds = {m["name"]: m["kind"] for m in queued}
-        self.assertEqual(kinds["Riverside Dental"], "outreach")  # site built, never emailed
-        self.assertEqual(kinds["Hartley & Co Accountants"], "followup")  # emailed 6 days ago, no reply
+        self.assertEqual(kinds["Pine Cone Guest House"], "outreach")  # site built, never emailed
+        self.assertNotIn("Riverside Dental", kinds)  # only an out-of-office so far; follow-up not due yet
         self.assertNotIn("Rosa's Bakery", kinds)  # replied: never auto-emailed again
+        self.assertNotIn("Hartley & Co Accountants", kinds)
 
     def test_lead_detail_edit_rebuild_and_read(self):
         lead_id = self.conn.execute("SELECT id FROM leads WHERE name=\"Rosa's Bakery\"").fetchone()[0]
@@ -312,12 +318,19 @@ class AdminTests(Base):
         page = (Path(self.cfg["sites_dir"]) / d["lead"]["slug"] / "index.html").read_text()
         self.assertTrue("999 111" in page)
         self.call("POST", f"/api/leads/{lead_id}/read")
-        self.assertEqual(self.call("GET", "/api/stats")["unread"], 1)
+        self.assertEqual(self.call("GET", "/api/stats")["unread"], 3)
 
     def test_status_opted_out_suppresses(self):
-        lead_id = self.conn.execute("SELECT id FROM leads WHERE name='Riverside Dental'").fetchone()[0]
+        lead_id = self.conn.execute("SELECT id FROM leads WHERE name='Pine Cone Guest House'").fetchone()[0]
         self.call("POST", f"/api/leads/{lead_id}", {"status": "opted_out"})
         self.assertTrue(self.call("GET", f"/api/leads/{lead_id}")["lead"]["suppressed"])
+        with self.assertRaises(ValueError):
+            self.call("POST", f"/api/leads/{lead_id}/reply", {"subject": "Hi", "body": "Hello"})
+
+    def test_dismiss_clears_needs_reply(self):
+        todo = self.call("GET", "/api/mailbox", query={"folder": "todo"})
+        self.call("POST", f"/api/messages/{todo[0]['id']}/dismiss")
+        self.assertEqual(self.call("GET", "/api/stats")["needs_reply"], len(todo) - 1)
 
     def test_actions_run_in_background(self):
         job = self.call("POST", "/api/actions/send", {"live": False})
@@ -357,6 +370,154 @@ class AdminTests(Base):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class ReplyTests(MailboxTests):
+    """The reply engine: classify, draft, auto-send only when safe."""
+
+    def reply(self, body, subject="Re: I made a website for Rosa's Bakery", headers=None, msg_id=None):
+        self.n = getattr(self, "n", 0) + 1
+        m = EmailMessage()
+        m["From"], m["Subject"] = "Rosa <rosa@gmail.com>", subject
+        m["Message-ID"] = msg_id or f"<r{self.n}@x.test>"
+        for k, v in (headers or {}).items():
+            m[k] = v
+        m.set_content(body)
+        self.sent = getattr(self, "sent", [])
+        with mock.patch.object(outreach.smtplib, "SMTP") as smtp:
+            smtp.return_value.send_message.side_effect = lambda msg: self.sent.append(msg)
+            outreach.ingest(self.conn, self.cfg, bytes(m), self.leads, log=lambda *a: None)
+        return self.conn.execute("SELECT * FROM messages WHERE direction='in' ORDER BY id DESC LIMIT 1").fetchone()
+
+    def lead(self):
+        return self.conn.execute("SELECT * FROM leads WHERE email='rosa@gmail.com'").fetchone()
+
+    def test_review_mode_drafts_but_never_sends(self):
+        self.cfg["payment_link"] = "https://pay.test/abc"
+        m = self.reply("Love it, let's do it! How do we pay?")
+        self.assertEqual((m["intent"], m["reply_state"], m["engine"]), ("interested", "needs_reply", "rules"))
+        self.assertIn("https://pay.test/abc", m["draft_body"])
+        self.assertIn("$29/month", m["draft_body"])
+        self.assertEqual(m["draft_subject"], "Re: I made a website for Rosa's Bakery")
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.lead()["status"], "replied")
+
+    def test_auto_mode_sends_safe_replies(self):
+        self.cfg["reply_mode"] = "auto"
+        m = self.reply("How much is it per month?")
+        self.assertEqual((m["intent"], m["reply_state"]), ("price_question", "auto_sent"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0]["In-Reply-To"], m["message_id"])
+        out = self.conn.execute("SELECT kind FROM messages WHERE direction='out' ORDER BY id DESC").fetchone()
+        self.assertEqual(out["kind"], "auto_reply")
+        self.assertEqual(outreach.sent_today(self.conn), 2)  # auto replies don't use the cold-email budget
+
+    def test_auto_mode_holds_anything_risky(self):
+        self.cfg["reply_mode"] = "auto"
+        for body, intent in [("Could you do it cheaper?", "negotiating"),
+                             ("Can it have an online shop?", "custom_request"),
+                             ("I've paid the invoice", "payment_done"),
+                             ("Hmm, I'll think about it", "other")]:
+            m = self.reply(body)
+            self.assertEqual((m["intent"], m["reply_state"]), (intent, "needs_you"), body)
+            self.assertTrue(m["needs_human"] and m["draft_body"])
+        self.assertEqual(self.sent, [])
+
+    def test_auto_reply_limit(self):
+        self.cfg["reply_mode"] = "auto"
+        for i in range(replies.MAX_AUTO_REPLIES + 1):
+            m = self.reply("How long does it take?")
+        self.assertEqual(len(self.sent), replies.MAX_AUTO_REPLIES)
+        self.assertEqual(m["reply_state"], "needs_reply")
+
+    def test_unsubscribe_and_legal_never_answered(self):
+        self.cfg["reply_mode"] = "auto"
+        m = self.reply("Please remove me from your list")
+        self.assertEqual((m["intent"], m["reply_state"], m["draft_body"]), ("unsubscribe", "no_reply", ""))
+        self.assertTrue(db.is_suppressed(self.conn, "rosa@gmail.com"))
+        m = self.reply("I will be speaking to my lawyer about this")
+        self.assertEqual((m["intent"], m["reply_state"]), ("legal", "needs_you"))
+        self.assertEqual(self.sent, [])
+
+    def test_out_of_office_keeps_follow_up_going(self):
+        m = self.reply("I'm on holiday until 3 November with limited access to email.",
+                       subject="Automatic reply: I made a website", headers={"Auto-Submitted": "auto-replied"})
+        self.assertEqual((m["intent"], m["reply_state"]), ("auto_reply", "no_reply"))
+        self.assertEqual(self.lead()["status"], "contacted")
+        m = self.reply("Thank you for your email. I am out of the office until Monday.")
+        self.assertEqual(m["intent"], "auto_reply")  # no headers, but clearly an out-of-office
+
+    def test_not_interested_closes_lead_without_reply(self):
+        m = self.reply("No thanks, we're fine.")
+        self.assertEqual((m["intent"], m["reply_state"]), ("not_interested", "no_reply"))
+        self.assertEqual(self.lead()["status"], "lost")
+        self.assertFalse(db.is_suppressed(self.conn, "rosa@gmail.com"))
+
+    def test_won_customer_not_downgraded(self):
+        self.conn.execute("UPDATE leads SET status='won' WHERE email='rosa@gmail.com'")
+        self.reply("Not interested in the extras thanks")
+        self.assertEqual(self.lead()["status"], "won")
+
+    def test_failed_auto_send_falls_back_to_you(self):
+        self.cfg["reply_mode"] = "auto"
+        with mock.patch.object(outreach, "send_reply", side_effect=OSError("smtp down")):
+            m = self.reply("How long does it take?")
+        m = self.conn.execute("SELECT * FROM messages WHERE id=?", (m["id"],)).fetchone()
+        self.assertEqual(m["reply_state"], "needs_reply")
+        self.assertIn("smtp down", m["needs_human"])
+
+    def test_ai_draft_used_but_safety_rules_win(self):
+        self.cfg["reply_mode"] = "auto"
+        ai = {"intent": "domain_hosting", "summary": "Asks if they own the domain", "needs_human": False,
+              "human_reason": "", "reply_body": "Hi Rosa,\n\nYes, the domain is yours.\n\nSam"}
+        with mock.patch.object(replies, "ai_available", return_value=True), \
+             mock.patch.object(replies, "classify_ai", return_value=ai) as call:
+            m = self.reply("Do I own the domain?")
+            self.assertEqual((m["engine"], m["intent"], m["reply_state"]), ("ai", "domain_hosting", "auto_sent"))
+            self.assertIn("the domain is yours", self.sent[-1].get_content())
+            # The AI is never consulted for an unsubscribe, and can't overrule one.
+            m = self.reply("Unsubscribe me please")
+            self.assertEqual((m["intent"], m["reply_state"]), ("unsubscribe", "no_reply"))
+        self.assertEqual(call.call_count, 1)
+
+    def test_ai_flagged_needs_human_is_held(self):
+        self.cfg["reply_mode"] = "auto"
+        ai = {"intent": "price_question", "summary": "Wants a price for 3 sites", "needs_human": True,
+              "human_reason": "Asks about a multi-site discount", "reply_body": "Hi,\n\nLet me check.\n\nSam"}
+        with mock.patch.object(replies, "ai_available", return_value=True), \
+             mock.patch.object(replies, "classify_ai", return_value=ai):
+            m = self.reply("How much for three sites?")
+        self.assertEqual((m["reply_state"], m["needs_human"]), ("needs_you", "Asks about a multi-site discount"))
+        self.assertEqual(self.sent, [])
+
+    def test_ai_failure_falls_back_to_rules(self):
+        with mock.patch.object(replies, "ai_available", return_value=True), \
+             mock.patch.object(replies, "classify_ai", side_effect=RuntimeError("overloaded")):
+            m = self.reply("How long does it take?")
+        self.assertEqual((m["engine"], m["intent"], m["reply_state"]), ("rules", "timeline", "needs_reply"))
+
+    def test_sending_a_reply_clears_the_todo(self):
+        m = self.reply("How much?")
+        lead = self.lead()
+        with mock.patch.object(outreach.smtplib, "SMTP"):
+            outreach.send_reply(self.conn, self.cfg, lead, m["draft_subject"], m["draft_body"])
+        self.assertEqual(replies.pending(self.conn), 0)
+
+    def test_owner_digest(self):
+        m = self.reply("Can you do it cheaper?")
+        with mock.patch.object(outreach.smtplib, "SMTP") as smtp:
+            self.assertEqual(outreach.notify_owner(self.conn, self.cfg, [m["id"]], log=lambda *a: None), 1)
+        digest = smtp.return_value.send_message.call_args[0][0]
+        self.assertEqual(digest["To"], self.cfg["reply_to_email"])
+        self.assertIn("Decide whether to offer a discount", digest.get_content())
+
+    def test_templates_render_for_every_intent(self):
+        lead = self.lead()
+        for intent, (_, _, _, reply_needed) in replies.INTENTS.items():
+            body = replies.draft_from_template(intent, lead, self.cfg)
+            if reply_needed:
+                self.assertTrue(body.startswith("Hi,") and "Sam" in body, intent)
+                self.assertNotIn("{", body, intent)
 
 
 class SettingsTests(unittest.TestCase):

@@ -1,0 +1,3 @@
+# Optional: enables AI-written replies to customers (Settings -> Replying to customers).
+# Everything else uses only the Python standard library.
+anthropic>=2.3

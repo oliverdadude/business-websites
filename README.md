@@ -61,6 +61,36 @@ python -m webbiz admin --demo     # try it with sample data first (separate demo
 The dashboard only listens on your own computer by default. To open it from another device,
 set `ADMIN_PASSWORD` and run it with `--host 0.0.0.0`.
 
+## Handling customer replies
+
+Every reply from a lead is sorted into one of these situations, and each gets a suggested answer:
+
+| Situation | What happens |
+|---|---|
+| Interested / "let's go" | Next steps, payment link, timeline. Lead → Replied |
+| Asks the price, what's included, how long, about the domain, or who you are | Answered from your settings |
+| Wants changes | Asks them to send the changes, and says they're free before they decide |
+| Wants a call, a discount or custom work (shop, bookings…), or says they paid | Draft written, **always waits for you** |
+| Wrong person | Asks them to pass it on |
+| Not interested / already has a site | No reply (a no is respected). Lead → Lost |
+| Unsubscribe, complaint, legal threat | Never answered; added to do-not-contact. Legal threats are flagged to you |
+| Out-of-office | Ignored, and follow-ups continue as normal |
+| Bounce | Address suppressed |
+| Anything else | Holding reply drafted, flagged for you |
+
+- **Review mode** (the default): replies wait in **Mailbox → Needs reply** with the draft
+  pre-filled. You edit it if needed and click Send, or click **No reply needed**.
+- **Auto mode:** routine answers send themselves. Anything risky still waits for you, and
+  nobody gets more than 3 automatic replies.
+- **AI replies (optional):** run `pip install anthropic` and add an Anthropic API key in
+  Settings. Claude then reads the whole conversation and writes a tailored reply, including
+  for unusual questions. It uses only the facts you've set (prices, what's included,
+  turnaround, payment link and FAQ notes) and flags anything it's unsure about. If the AI
+  fails, the templates take over. The unsubscribe, legal and complaint checks always run
+  first, and the AI can't overrule them.
+- **Checks your inbox** every 10 minutes while the dashboard is open, and emails you a short
+  summary when a reply needs you personally.
+
 ## Website designs
 
 Each site is themed by business type, with its own fonts, colours, wording and services:

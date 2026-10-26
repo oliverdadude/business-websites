@@ -21,13 +21,24 @@ DEFAULTS = {
     "followup_after_days": 4,
     "max_emails_per_lead": 2,
     "check_email_domains": True,
+    # Replying to customers (see webbiz/replies.py)
+    "reply_mode": "review",          # "review": you approve every reply; "auto": safe replies send themselves
+    "payment_link": "",              # e.g. a Stripe Payment Link for the setup fee
+    "turnaround_days": 3,
+    "included": "- A mobile-friendly website on your own web address (.com)\n"
+                "- Your opening hours, contact details, map and services\n"
+                "- Showing up properly on Google, with a link from your Google Business Profile\n"
+                "- Hosting, security and small updates whenever you need them",
+    "reply_faq": "",                 # extra facts for the AI, e.g. "We also do logos for $99."
+    "auto_sync_minutes": 10,         # how often the dashboard checks your inbox (0 = off)
+    "notify_needs_you": True,        # email yourself when a reply needs your attention
     "db_path": "data/leads.db",
     "sites_dir": "output/sites",
 }
 
 # Secrets live in .env (or real environment variables, which take precedence), never in config.json.
 SECRET_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM",
-               "IMAP_HOST", "IMAP_USER", "IMAP_PASS", "NETLIFY_TOKEN")
+               "IMAP_HOST", "IMAP_USER", "IMAP_PASS", "NETLIFY_TOKEN", "ANTHROPIC_API_KEY")
 
 
 def read_env_file(path=None):
@@ -62,6 +73,7 @@ def load(path=None):
         "password": env("IMAP_PASS", env("SMTP_PASS")),
     }
     cfg["netlify_token"] = env("NETLIFY_TOKEN")
+    cfg["anthropic_api_key"] = env("ANTHROPIC_API_KEY")
     cfg["configured"] = path.exists()
     return cfg
 

@@ -12,6 +12,9 @@ raise the limit slowly over a few weeks.
 
 ## Reply templates
 
+The dashboard drafts these for you automatically (Mailbox → Needs reply). Edit the facts it uses
+in Settings → Replying to customers. The originals are below for reference.
+
 **They're interested**
 > Great! Here's how it works:
 > 1. Pay the $299 setup here: <payment link>

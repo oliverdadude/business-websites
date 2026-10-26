@@ -9,6 +9,7 @@ on the right side of CAN-SPAM / GDPR / PECR style rules):
   * at most `max_emails_per_lead` emails per business, and none after any reply
 """
 import email
+import hashlib
 import imaplib
 import random
 import re
@@ -20,7 +21,7 @@ from email.header import decode_header, make_header
 from email.utils import make_msgid, parseaddr, parsedate_to_datetime
 from pathlib import Path
 
-from . import db
+from . import db, replies
 from .sitegen import nice_category, preview_url
 
 SUBJECTS = {
@@ -216,8 +217,8 @@ def send(conn, cfg, live=False, limit=None, outbox=None, skip_ids=(), log=print,
     return count
 
 
-def send_reply(conn, cfg, lead, subject, body):
-    """Send a hand-written email to a lead (from the admin mailbox), threaded onto their last message."""
+def send_reply(conn, cfg, lead, subject, body, kind="reply"):
+    """Send an email to a lead (from the mailbox, or automatically), threaded onto their last message."""
     problems = check_ready(cfg, for_outreach=False)
     if problems:
         raise SystemExit("Not ready to send:\n  - " + "\n  - ".join(problems))
@@ -237,7 +238,12 @@ def send_reply(conn, cfg, lead, subject, body):
         smtp.send_message(msg)
     finally:
         smtp.quit()
-    _record_sent(conn, lead["id"], "reply", msg)
+    _record_sent(conn, lead["id"], kind, msg)
+    # Anything they sent before this is now answered.
+    conn.execute("UPDATE messages SET reply_state=? WHERE lead_id=? AND direction='in' "
+                 "AND reply_state IN ('needs_reply','needs_you')",
+                 ("auto_sent" if kind == "auto_reply" else "replied", lead["id"]))
+    conn.commit()
     return msg
 
 
@@ -286,25 +292,59 @@ def _date_of(msg):
         return db.now()
 
 
-def ingest(conn, raw, leads):
-    """Store one inbound email if it's from (or bounced from) a lead and update the lead. Returns outcome or None."""
+def ingest(conn, cfg, raw, leads, log=print, auto_send=True):
+    """Store one inbound email if it's from (or bounced from) a lead, then let the reply engine handle it.
+
+    Returns "bounced", "opted_out" or "replied" for a newly stored message, or None.
+    """
     msg = email.message_from_bytes(raw)
     hit = classify(msg, leads)
     if not hit:
         return None
     addr, outcome = hit
     lead = leads[addr]
-    msg_id = msg.get("Message-ID") or f"<no-id-{hash(raw)}@webbiz>"
-    is_new = db.add_message(conn, lead["id"], "in", "bounce" if outcome == "bounced" else "inbound", msg_id,
+    msg_id = msg.get("Message-ID") or f"<sha1-{hashlib.sha1(raw).hexdigest()}@webbiz>"
+    bounced = outcome == "bounced"
+    is_new = db.add_message(conn, lead["id"], "in", "bounce" if bounced else "inbound", msg_id,
                             _decode(msg.get("Subject")), _text_of(msg), _decode(msg.get("From")),
                             _decode(msg.get("To")), msg.get("In-Reply-To", ""), _date_of(msg))
     if not is_new:
         return None  # already processed on an earlier sync; don't override manual status changes
-    if outcome in ("opted_out", "bounced"):
-        db.suppress(conn, addr, "bounce" if outcome == "bounced" else "opt-out")
-    elif lead["status"] in ("site_built", "contacted"):
-        db.set_status(conn, lead["id"], "replied")
-    return outcome
+    if bounced:
+        db.suppress(conn, addr, "bounce")
+        conn.execute("UPDATE messages SET reply_state='no_reply', intent='bounce', summary='Email bounced' "
+                     "WHERE message_id=?", (msg_id,))
+        conn.commit()
+        return "bounced"
+    row_id = conn.execute("SELECT id FROM messages WHERE message_id=?", (msg_id,)).fetchone()[0]
+    send = (lambda lead_row, subject, body: send_reply(conn, cfg, lead_row, subject, body, kind="auto_reply")) \
+        if auto_send else None
+    decision = replies.process(conn, cfg, row_id, replies.header_dict(msg), log=log, send=send)
+    return "opted_out" if decision["intent"] in ("unsubscribe", "complaint", "legal") else "replied"
+
+
+def notify_owner(conn, cfg, message_ids, log=print):
+    """Email yourself a digest of replies that need your attention."""
+    rows = conn.execute(
+        f"SELECT m.*, l.name FROM messages m JOIN leads l ON l.id=m.lead_id WHERE m.id IN "
+        f"({','.join('?' * len(message_ids))}) AND m.reply_state='needs_you'", message_ids).fetchall()
+    if not rows or check_ready(cfg, for_outreach=False):
+        return 0
+    msg = EmailMessage()
+    msg["Subject"] = f"webbiz: {len(rows)} customer repl{'y needs' if len(rows) == 1 else 'ies need'} you"
+    msg["From"] = f"webbiz <{cfg['smtp']['from_email']}>"
+    msg["To"] = cfg["reply_to_email"]
+    lines = [f"- {r['name']}: {r['summary']}\n  Why: {r['needs_human']}\n  They wrote: "
+             f"{r['body'][:300].strip()}\n" for r in rows]
+    msg.set_content("These replies need you. A suggested answer is waiting in the dashboard "
+                    "(Mailbox -> Needs reply).\n\n" + "\n".join(lines))
+    smtp = _smtp(cfg)
+    try:
+        smtp.send_message(msg)
+    finally:
+        smtp.quit()
+    log(f"Emailed you about {len(rows)} repl{'y' if len(rows) == 1 else 'ies'} that need you.")
+    return len(rows)
 
 
 def sync_replies(conn, cfg, log=print):
@@ -318,19 +358,36 @@ def sync_replies(conn, cfg, log=print):
         return {}
     first_sent = conn.execute("SELECT MIN(created_at) FROM messages WHERE direction='out'").fetchone()[0]
     since_imap = (datetime.fromisoformat(first_sent) - timedelta(days=1)).strftime("%d-%b-%Y")
+    known = {r[0] for r in conn.execute("SELECT message_id FROM messages WHERE direction='in'")}
+    before = conn.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()[0]
     results = {}
     with imaplib.IMAP4_SSL(imap_cfg["host"]) as box:
         box.login(imap_cfg["user"], imap_cfg["password"])
         box.select("INBOX", readonly=True)
         _, data = box.search(None, f'(SINCE "{since_imap}")')
         for num in data[0].split():
+            # Headers first: only download whole emails from leads (or bounce notices) we haven't stored.
+            _, head = box.fetch(num, "(BODY.PEEK[HEADER.FIELDS (FROM MESSAGE-ID)])")
+            h = email.message_from_bytes(head[0][1])
+            sender = parseaddr(h.get("From", ""))[1].lower()
+            if h.get("Message-ID") in known:
+                continue
+            if sender not in leads and not sender.startswith(("mailer-daemon", "postmaster")):
+                continue
             _, parts = box.fetch(num, "(BODY.PEEK[])")
             raw = parts[0][1]
-            outcome = ingest(conn, raw, leads)
+            outcome = ingest(conn, cfg, raw, leads, log=log)
             if outcome:
                 addr = classify(email.message_from_bytes(raw), leads)[0]
                 results[addr] = outcome if results.get(addr) != "opted_out" else "opted_out"
     for addr, outcome in results.items():
         log(f"{outcome:9} {addr} ({leads[addr]['name']})")
     log(f"{len(results)} lead(s) updated from the inbox.")
+    if cfg["notify_needs_you"]:
+        new_ids = [r[0] for r in conn.execute("SELECT id FROM messages WHERE id>? AND direction='in'", (before,))]
+        if new_ids:
+            try:
+                notify_owner(conn, cfg, new_ids, log=log)
+            except Exception as exc:
+                log(f"Couldn't email you the summary: {exc}")
     return results

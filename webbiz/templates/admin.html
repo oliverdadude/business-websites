@@ -203,7 +203,8 @@
     <nav class="nav">
       <a href="#/" data-nav="dash"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
       <a href="#/leads" data-nav="leads"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Leads</a>
-      <a href="#/mail/inbox" data-nav="mail"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Mailbox<span class="count" id="unread" hidden></span></a>
+      <a href="#/mail/todo" data-nav="mail"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Mailbox<span class="count" id="unread" hidden></span></a>
+      <a href="#/mail/todo" class="sub" data-nav="mail-todo">Needs reply<span class="count" id="todo" hidden></span></a>
       <a href="#/mail/inbox" class="sub" data-nav="mail-inbox">Inbox</a>
       <a href="#/mail/sent" class="sub" data-nav="mail-sent">Sent</a>
       <a href="#/mail/queued" class="sub" data-nav="mail-queued">Queued</a>
@@ -259,6 +260,7 @@ function setNav(key, sub) {
 async function refreshBadge() {
   const s = await api("/api/stats").catch(() => null); if (!s) return;
   const u = $("#unread"); u.hidden = !s.unread; u.textContent = s.unread;
+  const t = $("#todo"); t.hidden = !s.needs_reply; t.textContent = s.needs_reply;
   $("#bizname").textContent = s.business_name;
   $("#setupdot").hidden = !s.ready.length;
   return s;
@@ -275,7 +277,7 @@ async function dashboard() {
     ["Total leads", s.total, "found or imported"],
     ["Sites ready", n("site_built"), "waiting to be emailed"],
     ["Contacted", contacted, `${s.sent_total} emails sent`],
-    ["Replied", n("replied"), `${replyRate}% reply rate`],
+    ["Needs reply", `<a href="#/mail/todo" style="color:inherit">${s.needs_reply}</a>`, s.needs_you ? `${s.needs_you} need you personally` : `${replyRate}% reply rate`],
     ["Won", n("won"), "paying customers"],
     ["Sent today", `${s.sent_today}<span class="muted" style="font-size:15px">/${s.daily_limit}</span>`, `${s.queue} queued for next send`],
   ];
@@ -291,7 +293,7 @@ async function dashboard() {
           <div class="funnel">${order.filter((k) => n(k)).map((k) => `<div title="${LABEL[k]}: ${n(k)}" style="width:${(n(k) / s.total) * 100}%;background:${COLORS[k]}"></div>`).join("")}</div>
           <div class="legend">${order.filter((k) => n(k)).map((k) => `<a href="#/leads?status=${k}" class="muted"><i style="background:${COLORS[k]}"></i>${LABEL[k]} <b style="color:var(--ink)">${n(k)}</b></a>`).join("") || "No leads yet — find some below."}</div>
         </div></div>
-        <div class="panel"><div class="ph"><h2>Latest replies</h2><a href="#/mail/inbox" class="small">View all</a></div>
+        <div class="panel"><div class="ph"><h2>Latest replies</h2><span class="row"><span class="muted small">${s.reply_mode === "auto" ? "Auto-reply on" : "You approve every reply"}${s.ai ? " · AI drafting on" : ""}</span><a href="#/mail/todo" class="small">Needs reply →</a></span></div>
           ${s.recent.length ? `<div>${s.recent.map((m) => `<a href="#/leads/${m.lead_id}" style="display:block;color:inherit;padding:12px 18px;border-bottom:1px solid var(--line2)">
             <div class="row" style="justify-content:space-between"><b>${h(m.name)}</b><span class="muted small">${when(m.created_at)}</span></div>
             <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.kind === "bounce" ? '<span class="tag bounce">bounced</span> ' : ""}${!m.is_read ? '<span class="badge">new</span> ' : ""}${h((m.body || "").slice(0, 140))}</div></a>`).join("")}</div>`
@@ -363,10 +365,10 @@ async function leadsPage(params) {
 // ---------- Lead detail ----------
 function messageCard(m, i) {
   const out = m.direction === "out", long = (m.body || "").length > 420;
-  const kind = { outreach: "First email", followup: "Follow-up", reply: "You replied", inbound: "Reply", bounce: "Bounce" }[m.kind] || m.kind;
+  const kind = { outreach: "First email", followup: "Follow-up", reply: "You replied", auto_reply: "Auto-reply sent", inbound: "Reply", bounce: "Bounce" }[m.kind] || m.kind;
   return `<div class="msg ${out ? "out" : "in"} ${!out && !m.is_read ? "unread" : ""}">
     <div class="mh"><span><span class="tag ${m.kind === "bounce" ? "bounce" : out ? "" : "in"}">${h(kind)}</span> <b>${h(out ? "You" : m.from_addr)}</b></span><span title="${h(when(m.created_at, true))}">${when(m.created_at)}</span></div>
-    <div class="subj">${h(m.subject)}</div><pre class="${long ? "clamp" : ""}" id="mb${i}">${h(m.body)}</pre>${long ? `<button class="more" data-t="mb${i}">Show more</button>` : ""}</div>`;
+    ${!out ? `<div class="row" style="gap:6px;margin-bottom:6px">${statePill(m)}${intentTag(m)}</div>` : ""}<div class="subj">${h(m.subject)}</div><pre class="${long ? "clamp" : ""}" id="mb${i}">${h(m.body)}</pre>${long ? `<button class="more" data-t="mb${i}">Show more</button>` : ""}</div>`;
 }
 
 async function leadPage(id) {
@@ -374,7 +376,8 @@ async function leadPage(id) {
   const d = await api("/api/leads/" + id), L = d.lead;
   if (d.messages.some((m) => m.direction === "in" && !m.is_read)) api(`/api/leads/${id}/read`, {}).then(refreshBadge);
   const siteUrl = L.slug ? `/sites/${encodeURIComponent(L.slug)}/` : "";
-  const lastIn = [...d.messages].reverse().find((m) => m.direction === "in");
+  const lastIn = [...d.messages].reverse().find((m) => m.direction === "in" && m.kind !== "bounce");
+  const pendingIn = [...d.messages].reverse().find((m) => m.direction === "in" && ["needs_reply", "needs_you"].includes(m.reply_state));
   view.innerHTML = `
     <div class="head"><div><a class="crumb" href="#/leads">← Leads</a><h1>${h(L.name)}</h1><p>${h(cat(L.category) || "Business")}${L.city ? " · " + h(L.city) : ""} · ${h(L.email)} ${L.suppressed ? '<span class="pill s-opted_out">Do not contact</span>' : ""}</p></div>
       <div class="row"><select class="in" id="status" style="width:auto">${d.statuses.map((s) => `<option value="${s}" ${s === L.status ? "selected" : ""}>${LABEL[s]}</option>`).join("")}</select>
@@ -392,9 +395,8 @@ async function leadPage(id) {
           ${d.next_email ? `<div class="msg draft"><div class="mh"><span><span class="tag">Queued · ${d.next_email.step === 1 ? "first email" : "follow-up"}</span></span><span>next send</span></div><div class="subj">${h(d.next_email.subject)}</div><pre class="clamp" id="draft">${h(d.next_email.body)}</pre><button class="more" data-t="draft">Show more</button></div>` : ""}
           ${!d.messages.length && !d.next_email ? `<div class="empty" style="padding:24px"><b>No emails yet</b>${L.slug ? "This lead hasn't been emailed." : "Build the site first; the first email is then queued."}</div>` : ""}
           ${L.suppressed ? "" : `<div class="hr" style="margin:4px 0"></div>
-          <input class="in" id="rsub" value="${h(lastIn ? (lastIn.subject.startsWith("Re:") ? lastIn.subject : "Re: " + lastIn.subject) : "Re: a website for " + L.name)}">
-          <textarea class="in" id="rbody" rows="6" placeholder="Write a reply to ${h(L.name)}…"></textarea>
-          <div class="row" style="justify-content:space-between"><button class="btn sm danger ghost" id="optout">Mark do-not-contact</button><button class="btn primary" id="send">Send email</button></div>`}
+          ${replyBox(pendingIn || lastIn, L.name)}
+          <div class="row" style="justify-content:space-between"><span class="row"><button class="btn sm danger ghost" id="optout">Mark do-not-contact</button>${pendingIn ? '<button class="btn sm ghost" id="dismiss">No reply needed</button>' : ""}</span><button class="btn primary" id="send">Send email</button></div>`}
         </div></div>
         <div class="panel"><div class="ph"><h2>Details</h2><span class="muted small">Edits update the website on rebuild</span></div><div class="pb">
           <div class="fields">
@@ -418,55 +420,83 @@ async function leadPage(id) {
   $("#save").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, fields()); toast("Saved"); }));
   $("#saveb").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, { ...fields(), rebuild: true }); toast("Saved and rebuilt"); leadPage(id); }));
   if (!L.suppressed) {
-    $("#send").addEventListener("click", (e) => guard(async () => {
-      e.target.disabled = true; e.target.innerHTML = '<span class="spin"></span> Sending';
-      try { await api(`/api/leads/${id}/reply`, { subject: $("#rsub").value, body: $("#rbody").value }); toast("Email sent"); leadPage(id); }
-      finally { e.target.disabled = false; e.target.textContent = "Send email"; }
-    }));
+    bindReply(id, pendingIn, () => leadPage(id));
     $("#optout").addEventListener("click", () => confirm(`Never email ${L.email} again?`) && guard(async () => { await api(`/api/leads/${id}/optout`, {}); toast("Added to do-not-contact list"); leadPage(id); }));
   }
 }
 
 // ---------- Mailbox ----------
+const STATE = {
+  needs_you: ["Needs you", "s-opted_out"], needs_reply: ["Reply ready", "s-replied"], auto_sent: ["Auto-replied ✓", "s-won"],
+  replied: ["Replied ✓", "s-contacted"], no_reply: ["No reply needed", "s-lost"], dismissed: ["Dismissed", "s-lost"],
+};
+const statePill = (m) => (m.direction === "in" && STATE[m.reply_state] ? `<span class="pill ${STATE[m.reply_state][1]}">${STATE[m.reply_state][0]}</span>` : "");
+const intentTag = (m) => (m.intent ? `<span class="tag ${["unsubscribe", "complaint", "legal", "bounce"].includes(m.intent) ? "bounce" : "in"}">${h(m.summary && m.engine !== "ai" ? m.summary : m.intent.replace(/_/g, " "))}</span>` : "");
+
+// The reply editor shared by the mailbox and the lead page.
+function replyBox(m, leadName) {
+  const pendingDraft = ["needs_reply", "needs_you"].includes(m && m.reply_state);
+  const subject = m ? (m.draft_subject || (m.subject.startsWith("Re:") ? m.subject : "Re: " + m.subject)) : "Re: a website for " + leadName;
+  return `${m && m.needs_human && pendingDraft ? `<div class="banner" style="margin:0 0 10px"><div><b>Needs you:</b> ${h(m.needs_human)}</div></div>` : ""}
+    ${m && m.summary && m.engine === "ai" ? `<div class="muted small" style="margin-bottom:8px">AI summary: ${h(m.summary)}</div>` : ""}
+    <input class="in" id="rsub" value="${h(subject)}" style="margin-bottom:8px">
+    <textarea class="in" id="rbody" rows="${pendingDraft ? 12 : 6}" placeholder="Write a reply to ${h(leadName)}…">${pendingDraft ? h(m.draft_body) : ""}</textarea>
+    ${pendingDraft && m.draft_body ? `<div class="muted small" style="margin-top:6px">Suggested reply (${m.engine === "ai" ? "written by AI" : "from your templates"}) — edit anything before sending.</div>` : ""}`;
+}
+function bindReply(leadId, msg, after) {
+  const send = $("#send");
+  if (send) send.addEventListener("click", () => guard(async () => {
+    send.disabled = true; send.innerHTML = '<span class="spin"></span> Sending';
+    try { await api(`/api/leads/${leadId}/reply`, { subject: $("#rsub").value, body: $("#rbody").value }); toast("Email sent"); refreshBadge(); after(); }
+    finally { send.disabled = false; send.textContent = "Send email"; }
+  }));
+  const dismiss = $("#dismiss");
+  if (dismiss && msg) dismiss.addEventListener("click", () => guard(async () => { await api(`/api/messages/${msg.id}/dismiss`, {}); toast("Marked as no reply needed"); refreshBadge(); after(); }));
+}
+
 async function mailPage(folder) {
   setNav("mail", "mail-" + folder);
   const items = await api("/api/mailbox?folder=" + folder);
-  const titles = { inbox: "Inbox", sent: "Sent", queued: "Queued" };
+  const titles = { todo: "Needs reply", inbox: "Inbox", sent: "Sent", queued: "Queued" };
+  const blurb = { todo: "Replies waiting for you, with a suggested answer ready to edit and send.", inbox: "Every reply from your leads.", sent: "Everything you (or auto-reply) sent.", queued: "These go out on the next send. Preview from the dashboard first." };
   const sel = items.find((m) => String(m.id) === String(state.mailSel)) || items[0];
+  const incoming = folder === "todo" || folder === "inbox";
   view.innerHTML = `
-    <div class="head"><div><h1>Mailbox</h1><p>${folder === "queued" ? "These go out on the next send (dry-run preview from the dashboard first)." : "Every email to and from your leads."}</p></div>
-      ${folder === "inbox" ? `<button class="btn" id="sync">Sync inbox</button>` : ""}</div>
+    <div class="head"><div><h1>Mailbox</h1><p>${blurb[folder]}</p></div>
+      ${incoming ? `<button class="btn" id="sync">Check for new replies</button>` : ""}</div>
     <div class="panel"><div class="tabs">${Object.entries(titles).map(([k, t]) => `<a href="#/mail/${k}" class="${k === folder ? "on" : ""}">${t}</a>`).join("")}</div>
-      ${items.length ? `<div class="mail"><div class="list">${items.map((m) => `<div class="item ${sel && m.id === sel.id ? "on" : ""} ${folder === "inbox" && !m.is_read ? "unread" : ""}" data-id="${m.id}">
-          <div class="top"><span class="who">${h(folder === "inbox" ? m.name || m.from_addr : "To: " + (m.name || m.to_addr))}</span><span class="when">${when(m.created_at)}</span></div>
-          <div class="sj">${m.kind === "bounce" ? '<span class="tag bounce">bounce</span> ' : ""}${h(m.subject || "(no subject)")}</div><div class="sn">${h((m.body || "").replace(/\s+/g, " ").slice(0, 120))}</div></div>`).join("")}</div>
+      ${items.length ? `<div class="mail"><div class="list">${items.map((m) => `<div class="item ${sel && m.id === sel.id ? "on" : ""} ${incoming && !m.is_read ? "unread" : ""}" data-id="${m.id}">
+          <div class="top"><span class="who">${h(incoming ? m.name || m.from_addr : "To: " + (m.name || m.to_addr))}</span><span class="when">${when(m.created_at)}</span></div>
+          <div class="sj">${m.kind === "bounce" ? '<span class="tag bounce">bounce</span> ' : ""}${h(m.subject || "(no subject)")}</div><div class="sn">${h((m.body || "").replace(/\s+/g, " ").slice(0, 120))}</div>
+          ${incoming ? `<div class="row" style="margin-top:4px;gap:6px">${statePill(m)}${intentTag(m)}</div>` : ""}</div>`).join("")}</div>
         <div class="read" id="read"></div></div>`
-      : `<div class="empty"><b>Nothing in ${titles[folder].toLowerCase()}</b>${folder === "inbox" ? "Replies from leads appear here after syncing your inbox." : folder === "sent" ? "Emails you send (live) appear here." : "No leads are due an email right now."}</div>`}
+      : `<div class="empty"><b>${folder === "todo" ? "All caught up 🎉" : "Nothing in " + titles[folder].toLowerCase()}</b>${folder === "todo" ? "No replies are waiting for you." : folder === "inbox" ? "Replies from leads appear here after checking your inbox." : folder === "sent" ? "Emails you send (live) appear here." : "No leads are due an email right now."}</div>`}
     </div>`;
   const show = (m) => {
     state.mailSel = m.id;
     view.querySelectorAll(".item").forEach((el) => el.classList.toggle("on", el.dataset.id === String(m.id)));
+    const pendingDraft = ["needs_reply", "needs_you"].includes(m.reply_state);
     $("#read").innerHTML = `<h2>${h(m.subject || "(no subject)")}</h2>
-      <div class="meta">${folder === "inbox" ? `From <b>${h(m.from_addr)}</b>` : `To <b>${h(m.to_addr)}</b>`}${m.created_at ? ` · ${h(when(m.created_at, true))}` : ""} · <a href="#/leads/${m.lead_id}">${h(m.name || "Open lead")} →</a></div>
+      <div class="meta">${incoming ? `From <b>${h(m.from_addr)}</b>` : `To <b>${h(m.to_addr)}</b>`}${m.created_at ? ` · ${h(when(m.created_at, true))}` : ""} · <a href="#/leads/${m.lead_id}">${h(m.name || "Open lead")} →</a> ${statePill(m)} ${intentTag(m)}</div>
       <pre>${h(m.body)}</pre>
-      ${folder === "inbox" ? `<textarea class="in" id="qr" rows="5" placeholder="Quick reply…"></textarea><div class="row" style="justify-content:flex-end;margin-top:8px"><a class="btn" href="#/leads/${m.lead_id}">View lead & site</a><button class="btn primary" id="qrs">Send reply</button></div>` : `<a class="btn" href="#/leads/${m.lead_id}">View lead & site</a>`}`;
-    if (folder === "inbox" && !m.is_read) { m.is_read = 1; view.querySelector(`.item[data-id="${m.id}"]`).classList.remove("unread"); api(`/api/leads/${m.lead_id}/read`, {}).then(refreshBadge); }
-    const qrs = $("#qrs");
-    if (qrs) qrs.addEventListener("click", () => guard(async () => {
-      qrs.disabled = true;
-      try { await api(`/api/leads/${m.lead_id}/reply`, { subject: m.subject.startsWith("Re:") ? m.subject : "Re: " + m.subject, body: $("#qr").value }); toast("Reply sent"); $("#qr").value = ""; }
-      finally { qrs.disabled = false; }
-    }));
+      ${incoming && m.kind !== "bounce" && !["unsubscribe", "complaint", "legal"].includes(m.intent) ? `<div class="hr"></div>${replyBox(m, m.name)}
+        <div class="row" style="justify-content:space-between;margin-top:10px">
+          <span>${pendingDraft ? '<button class="btn sm ghost" id="dismiss">No reply needed</button>' : ""}</span>
+          <span class="row"><a class="btn" href="#/leads/${m.lead_id}">View lead & site</a><button class="btn primary" id="send">Send email</button></span></div>`
+      : `<a class="btn" href="#/leads/${m.lead_id}">View lead & site</a>`}`;
+    if (incoming && !m.is_read) { m.is_read = 1; const el = view.querySelector(`.item[data-id="${m.id}"]`); el && el.classList.remove("unread"); api(`/api/leads/${m.lead_id}/read`, {}).then(refreshBadge); }
+    bindReply(m.lead_id, m, () => { state.mailSel = null; mailPage(folder); });
   };
   view.querySelectorAll(".item").forEach((el) => el.addEventListener("click", () => show(items.find((m) => String(m.id) === el.dataset.id))));
   if (sel) show(sel);
   const sync = $("#sync");
   if (sync) sync.addEventListener("click", () => guard(async () => {
-    sync.disabled = true; sync.innerHTML = '<span class="spin"></span> Syncing';
-    await api("/api/actions/sync", {});
-    let job; do { await new Promise((r) => setTimeout(r, 1000)); job = await api("/api/job"); } while (job.running);
-    job.error ? toast(job.error, true) : toast(job.log.split("\n").pop() || "Synced");
-    refreshBadge(); mailPage(folder);
+    sync.disabled = true; sync.innerHTML = '<span class="spin"></span> Checking';
+    try {
+      await api("/api/actions/sync", {});
+      let job; do { await new Promise((r) => setTimeout(r, 1000)); job = await api("/api/job"); } while (job.running);
+      job.error ? toast(job.error, true) : toast(job.log.split("\n").filter(Boolean).pop() || "Up to date");
+    } finally { refreshBadge(); mailPage(folder); }
   }));
 }
 
@@ -496,7 +526,7 @@ const PRESETS = {
 };
 async function settingsPage() {
   setNav("settings");
-  const d = await api("/api/settings"), S = d.settings, E = d.email, N = d.netlify;
+  const d = await api("/api/settings"), S = d.settings, E = d.email, N = d.netlify, A = d.ai;
   const steps = [["Your business", d.steps.business], ["Email account", d.steps.email], ["Website hosting", d.steps.hosting], ["Prices & limits", d.steps.prices]];
   const field = (sec, k, label, val, extra = "") => `<label class="f">${label}<input class="in" data-s="${sec}" data-k="${k}" value="${h(val ?? "")}" ${extra}></label>`;
   const isGmail = (E.smtp_host || "").includes("gmail");
@@ -557,9 +587,34 @@ async function settingsPage() {
         </div>
         <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" data-save="settings">Save</button></div>
       </div></div>
+      <div class="panel"><div class="ph"><h2>5. Replying to customers</h2>${A.ready ? '<span class="ok-line">✓ AI drafting on</span>' : '<span class="muted small">Using reply templates</span>'}</div><div class="pb">
+        <p class="muted" style="margin:0 0 12px">Every reply is sorted automatically (interested, price question, wants changes, unsubscribe, out-of-office…) and gets a suggested answer built from the details below.</p>
+        <label class="f" style="margin-bottom:12px">When a reply comes in
+          <select class="in" data-s="settings" data-k="reply_mode">
+            <option value="review" ${S.reply_mode === "review" ? "selected" : ""}>Draft a reply — I'll check and send it (recommended to start)</option>
+            <option value="auto" ${S.reply_mode === "auto" ? "selected" : ""}>Send safe replies automatically — flag anything tricky for me</option>
+          </select></label>
+        <div class="help">In automatic mode, only routine answers go out by themselves: questions about price, what's included, timing, domains, who you are, change requests, and "yes, let's go". Anything involving discounts, custom work, payments, calls, complaints or legal threats always waits for you, and nobody gets more than 3 automatic replies. Unsubscribes, out-of-office replies and "no thanks" are never answered.</div>
+        <div class="fields">
+          ${field("settings", "payment_link", "Payment link for the setup fee (optional — e.g. a Stripe Payment Link)", S.payment_link, 'placeholder="https://buy.stripe.com/..."')}
+          ${field("settings", "turnaround_days", "Days to get a site live", S.turnaround_days, 'type="number" min="1" max="60"')}
+          <label class="f full">What's included (used in replies)<textarea class="in" data-s="settings" data-k="included" rows="4">${h(S.included)}</textarea></label>
+          <label class="f full">Anything else the replies should know (optional)<textarea class="in" data-s="settings" data-k="reply_faq" rows="3" placeholder="e.g. Extra pages are $50 each. I also design logos for $99. I'm based in Bend and can meet in person.">${h(S.reply_faq)}</textarea></label>
+          ${field("settings", "auto_sync_minutes", "Check for replies every (minutes, while the dashboard is open)", S.auto_sync_minutes, 'type="number" min="0" max="1440"')}
+          <label class="f" style="align-self:end;flex-direction:row;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink)"><input type="checkbox" data-s="settings" data-k="notify_needs_you" ${S.notify_needs_you ? "checked" : ""}> Email me when a reply needs me</label>
+        </div>
+        <div class="hr"></div>
+        <b>AI-written replies (optional)</b>
+        <p class="muted small" style="margin:4px 0 10px">With an Anthropic API key, Claude reads the whole conversation and writes a tailored reply for anything — including unusual questions the templates can't cover. It only uses the facts above and flags anything it isn't sure about. Costs a few cents per reply, billed by Anthropic.${A.package ? "" : ' <b>Needs the anthropic package:</b> close webbiz, run <code>pip install anthropic</code>, and start it again.'}</p>
+        <div class="fields">
+          <label class="f full">Anthropic API key — get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a><input class="in" type="password" data-s="ai" data-k="api_key" placeholder="${A.has_key ? "Saved — leave blank to keep" : "sk-ant-..."}" autocomplete="off"></label>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px">${A.has_key ? '<button class="btn sm ghost" id="rmkey">Remove key</button>' : ""}<button class="btn" data-test="test-ai">Test AI reply</button><button class="btn primary" data-save="ai">Save</button></div>
+        <div id="aitest"></div>
+      </div></div>
     </div>`;
 
-  const collect = (sec) => Object.fromEntries([...view.querySelectorAll(`[data-s="${sec}"]`)].map((el) => [el.dataset.k, el.value]));
+  const collect = (sec) => Object.fromEntries([...view.querySelectorAll(`[data-s="${sec}"]`)].map((el) => [el.dataset.k, el.type === "checkbox" ? el.checked : el.value]));
   const save = async (secs) => { const body = {}; secs.forEach((sec) => (body[sec] = collect(sec))); await api("/api/settings", body); };
   view.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", () => guard(async () => {
     await save(b.dataset.save === "settings" ? ["settings"] : [b.dataset.save, "settings"]);
@@ -574,9 +629,15 @@ async function settingsPage() {
   }));
   view.querySelectorAll("[data-test]").forEach((b) => b.addEventListener("click", () => guard(async () => {
     const label = b.textContent; b.disabled = true; b.innerHTML = '<span class="spin"></span> Testing';
-    try { await save(["email", "settings"]); toast((await api("/api/settings/" + b.dataset.test, {})).message); }
+    try {
+      await save(b.dataset.test === "test-ai" ? ["ai", "settings"] : ["email", "settings"]);
+      const r = await api("/api/settings/" + b.dataset.test, {}); toast(r.message);
+      if (r.reply_body !== undefined) $("#aitest").innerHTML = `<div class="msg in" style="margin-top:12px"><div class="mh"><span><b>Test customer wrote:</b> ${h(r.sample)}</span></div><div class="row" style="gap:6px;margin-bottom:6px"><span class="tag in">${h(r.intent)}</span>${r.needs_human ? `<span class="pill s-opted_out">Needs you: ${h(r.human_reason)}</span>` : ""}</div><pre>${h(r.reply_body)}</pre></div>`;
+    }
     finally { b.disabled = false; b.textContent = label; }
   })));
+  const rm = $("#rmkey");
+  if (rm) rm.addEventListener("click", () => guard(async () => { await api("/api/settings", { ai: { remove_key: true } }); toast("API key removed"); settingsPage(); }));
   $("#connect").addEventListener("click", (e) => guard(async () => {
     const b = e.target; b.disabled = true; b.innerHTML = '<span class="spin"></span> Connecting';
     try {
@@ -597,7 +658,7 @@ async function route() {
     if (path === "/" || path === "") await dashboard();
     else if (path === "/leads") await leadsPage(params);
     else if ((m = path.match(/^\/leads\/(\d+)$/))) await leadPage(+m[1]);
-    else if ((m = path.match(/^\/mail\/(inbox|sent|queued)$/))) await mailPage(m[1]);
+    else if ((m = path.match(/^\/mail\/(todo|inbox|sent|queued)$/))) await mailPage(m[1]);
     else if (path === "/sites") await sitesPage();
     else if (path === "/settings") await settingsPage();
     else location.hash = "#/";

@@ -3,6 +3,7 @@ rem Double-click to open the webbiz dashboard. Keep this window open while you u
 cd /d "%~dp0"
 where py >nul 2>nul
 if %errorlevel%==0 (
+  py -3 -c "import anthropic" >nul 2>nul || py -3 -m pip install --quiet --user anthropic >nul 2>nul
   py -3 -m webbiz admin --open
 ) else (
   where python >nul 2>nul
@@ -10,6 +11,7 @@ if %errorlevel%==0 (
     echo Python 3 is needed. Install it from https://www.python.org/downloads/
     echo Tick "Add python.exe to PATH" during install, then double-click this again.
   ) else (
+    python -c "import anthropic" >nul 2>nul || python -m pip install --quiet --user anthropic >nul 2>nul
     python -m webbiz admin --open
   )
 )
