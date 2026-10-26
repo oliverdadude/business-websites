@@ -1,0 +1,20 @@
+{
+  "business_name": "Your Web Studio",
+  "your_name": "Your Name",
+  "reply_to_email": "you@yourstudio.com",
+  "phone": "",
+  "postal_address": "123 Main St, Your Town, ST 00000",
+
+  "preview_base_url": "https://previews.yourstudio.com",
+  "publish_command": "",
+
+  "price_setup": 299,
+  "price_monthly": 29,
+
+  "daily_send_limit": 30,
+  "min_delay_seconds": 45,
+  "max_delay_seconds": 120,
+  "followup_after_days": 4,
+  "max_emails_per_lead": 2,
+  "check_email_domains": true
+}
