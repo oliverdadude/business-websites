@@ -1,0 +1,2 @@
+name,category,kind,description,acquisition,sourcePreference,buyPrice,gatherCost,marketValue,sellPrice,priceStatus,basePrice,approvedForSale,featured,popular,minMarginPct,quoteThreshold,extraCostPerUnit,lowStockThreshold
+Example Ore,Mining,RAW,Replace with a real material,GATHER,AUTO,,0,,,UNVERIFIED,,false,false,false,,,0,100

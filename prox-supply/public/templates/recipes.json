@@ -1,0 +1,6 @@
+[
+  { "item": "Example Component", "recipe": "Primary", "isPrimary": true, "outputQty": 1, "craftSeconds": null, "status": "UNVERIFIED",
+    "ingredients": [{ "item": "Example Ore", "quantity": 4 }] },
+  { "item": "Example Product", "recipe": "Primary", "isPrimary": true, "outputQty": 1, "status": "UNVERIFIED",
+    "ingredients": [{ "item": "Example Component", "quantity": 3 }, { "item": "Example Ore", "quantity": 2 }] }
+]

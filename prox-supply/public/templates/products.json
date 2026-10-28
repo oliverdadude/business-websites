@@ -1,0 +1,4 @@
+[
+  { "name": "Example Component", "category": "Components", "kind": "INTERMEDIATE", "priceStatus": "UNVERIFIED" },
+  { "name": "Example Product", "category": "Products", "kind": "PRODUCT", "sourcePreference": "CRAFT", "priceStatus": "UNVERIFIED", "minMarginPct": 15, "quoteThreshold": 5000 }
+]

@@ -1,0 +1,4 @@
+item,recipe,isPrimary,outputQty,craftSeconds,station,skill,skillLevel,extraCostPerBatch,status,notes,ingredient,quantity
+Example Component,Primary,true,1,,,,,0,UNVERIFIED,One row per ingredient,Example Ore,4
+Example Product,Primary,true,1,,,,,0,UNVERIFIED,,Example Component,3
+Example Product,Primary,true,1,,,,,0,UNVERIFIED,,Example Ore,2

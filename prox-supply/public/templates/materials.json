@@ -1,0 +1,3 @@
+[
+  { "name": "Example Ore", "category": "Mining", "kind": "RAW", "acquisition": "GATHER", "gatherCost": 0, "priceStatus": "UNVERIFIED", "lowStockThreshold": 100 }
+]

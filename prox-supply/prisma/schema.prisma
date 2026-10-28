@@ -1,0 +1,213 @@
+// Proximity Supply Co. — data model
+// All money values are whole Proximity RP in-game dollars (Int).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ItemKind {
+  RAW          // basic resource (coal, iron ore...)
+  INTERMEDIATE // crafted component used in other recipes
+  PRODUCT      // finished item you sell
+}
+
+enum Acquisition {
+  PURCHASE // bought from NPC / market at buyPrice
+  GATHER   // mined / farmed / fished yourself
+  STOCK    // only ever taken from existing stock
+}
+
+enum SourcePreference {
+  AUTO  // craft or buy, whichever is cheaper
+  CRAFT // always craft when a recipe exists
+  BUY   // always buy / gather, never craft
+}
+
+enum Verification {
+  VERIFIED
+  UNVERIFIED
+}
+
+enum OrderStatus {
+  PENDING_APPROVAL
+  ACCEPTED
+  GATHERING_MATERIALS
+  CRAFTING
+  READY_FOR_DELIVERY
+  COMPLETED
+  CANCELLED
+}
+
+model Item {
+  id                 String           @id @default(cuid())
+  slug               String           @unique
+  name               String           @unique
+  category           String           @default("Uncategorised")
+  kind               ItemKind         @default(RAW)
+  description        String           @default("")
+
+  // Acquisition / costs
+  acquisition        Acquisition      @default(PURCHASE)
+  sourcePreference   SourcePreference @default(AUTO)
+  buyPrice           Int?             // cost to buy one unit directly
+  gatherCost         Int?             // your own cost per unit when gathering (often 0)
+  marketValue        Int?             // replacement value per unit
+  sellPrice          Int?             // what you could sell the raw material for
+  priceStatus        Verification     @default(UNVERIFIED)
+
+  // Storefront
+  basePrice          Int?             // finished item selling price per unit
+  approvedForSale    Boolean          @default(false)
+  featured           Boolean          @default(false)
+  popular            Boolean          @default(false)
+  minMarginPct       Float            @default(15)
+  quoteThreshold     Int?             // orders at/above this qty need a custom quote
+  extraCostPerUnit   Int              @default(0) // other production expenses per unit
+
+  // Inventory
+  onHand             Int              @default(0)
+  lowStockThreshold  Int?
+
+  isDemo             Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  recipes            Recipe[]         @relation("RecipeOutput")
+  usedIn             RecipeIngredient[]
+  tiers              DiscountTier[]
+  orderLines         OrderLine[]
+  reservations       Reservation[]
+  adjustments        InventoryAdjustment[]
+}
+
+model Recipe {
+  id               String             @id @default(cuid())
+  itemId           String
+  item             Item               @relation("RecipeOutput", fields: [itemId], references: [id], onDelete: Cascade)
+  name             String             @default("Primary")
+  isPrimary        Boolean            @default(true)
+  outputQty        Int                @default(1)
+  craftSeconds     Int?
+  station          String?
+  skill            String?
+  skillLevel       Int?
+  extraCostPerBatch Int               @default(0)
+  status           Verification       @default(UNVERIFIED)
+  notes            String             @default("")
+  ingredients      RecipeIngredient[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([itemId])
+}
+
+model RecipeIngredient {
+  id        String @id @default(cuid())
+  recipeId  String
+  recipe    Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  quantity  Int
+
+  @@unique([recipeId, itemId])
+}
+
+model DiscountTier {
+  id       String @id @default(cuid())
+  itemId   String
+  item     Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  minQty   Int
+  pct      Float
+
+  @@unique([itemId, minQty])
+}
+
+model Order {
+  id                String        @id @default(cuid())
+  number            String        @unique
+  trackingTokenHash String
+  idempotencyKey    String        @unique
+  ign               String
+  discord           String
+  instructions      String        @default("")
+  status            OrderStatus   @default(PENDING_APPROVAL)
+  quoteRequested    Boolean       @default(false)
+  subtotal          Int
+  discountTotal     Int
+  total             Int
+  estCost           Int?
+  paymentReceived   Boolean       @default(false)
+  expectedDelivery  DateTime?
+  adminNotes        String        @default("")
+  rejectionReason   String?
+  inventoryApplied  Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  lines             OrderLine[]
+  reservations      Reservation[]
+  events            OrderEvent[]
+
+  @@index([status])
+}
+
+model OrderLine {
+  id          String @id @default(cuid())
+  orderId     String
+  order       Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  itemName    String
+  quantity    Int
+  unitPrice   Int
+  discountPct Float
+  lineTotal   Int
+}
+
+model OrderEvent {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  note      String      @default("")
+  createdAt DateTime    @default(now())
+}
+
+model Reservation {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  quantity  Int
+  createdAt DateTime @default(now())
+
+  @@unique([orderId, itemId])
+}
+
+model InventoryAdjustment {
+  id        String   @id @default(cuid())
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  delta     Int
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ip        String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([ip, createdAt])
+}
