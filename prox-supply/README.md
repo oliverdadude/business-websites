@@ -95,29 +95,35 @@ rate limiting.
 
 ---
 
-## 2. Deploying (Vercel + Neon)
+## 2. Deploying on Vercel
 
-1. **Database:** create a free project at [neon.tech](https://neon.tech). Copy the **pooled** connection
-   string (it contains `-pooler` and ends with `?sslmode=require`).
-2. **Create the tables** from your computer, pointing at Neon once:
+The Vercel project uses **Root Directory = `prox-supply`**, so it only builds this folder and ignores the
+rest of the repository (the webbiz tool next to it is unaffected and is not deployed by Vercel).
 
-   ```bash
-   DATABASE_URL="postgresql://…neon.tech/neondb?sslmode=require" npx prisma db push
-   ```
+Build command: `npm run vercel-build`. On every deploy it:
 
-   ```bash
-   DATABASE_URL="postgresql://…neon.tech/neondb?sslmode=require" npm run db:seed
-   ```
+1. Generates the Prisma client.
+2. Syncs the database tables with `prisma db push`, which never drops data. It refuses destructive
+   changes.
+3. Adds the six raw resources if they're missing.
+4. Builds Next.js.
 
-3. **Vercel:** push this repo to GitHub, then on [vercel.com](https://vercel.com) choose
-   *Add New → Project* and import the repo. The framework is detected automatically, and the build command
-   (`prisma generate && next build`) comes from `package.json`.
-4. Under *Settings → Environment Variables* add `DATABASE_URL`, `ADMIN_PASSWORD_HASH`, `SESSION_SECRET` and
-   (optionally) `NEXT_PUBLIC_SELLER_DISCORD`. Redeploy after adding them.
-5. Open `https://your-app.vercel.app/admin`, log in, and set your business details in **Settings**.
+### Environment variables
 
-When you change `prisma/schema.prisma` later, run `npx prisma db push` against the production database
-again (or switch to `prisma migrate` once the schema settles).
+| Variable | Notes |
+|---|---|
+| Database | Connect a Postgres database in **Vercel → Project → Storage** (Supabase or Neon). Its `POSTGRES_PRISMA_URL` / `POSTGRES_URL_NON_POOLING` variables are picked up automatically. Or set `DATABASE_URL` yourself. |
+| `ADMIN_PASSWORD_HASH` | Output of `npm run admin:hash -- "password"` |
+| `SESSION_SECRET` | 32+ random characters |
+| `NEXT_PUBLIC_SELLER_DISCORD` | Optional default for your Discord name |
+
+After adding or changing variables, redeploy.
+
+### Production branch
+
+Vercel deploys **production** from the branch set in *Project → Settings → Environments → Production →
+Branch Tracking*. Point it at the branch that contains `prox-supply/`. Other branches get preview
+deployments, which Vercel protects with a login by default.
 
 Notes:
 

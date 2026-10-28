@@ -2,7 +2,7 @@
   "name": "prox-supply",
   "version": "0.1.0",
   "private": true,
-  "description": "Proximity Supply Co. — independent bulk ordering and crafting management for Proximity RP",
+  "description": "Proximity Supply Co. \u2014 independent bulk ordering and crafting management for Proximity RP",
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -14,7 +14,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx scripts/seed.ts",
     "db:seed:demo": "tsx scripts/seed-demo.ts",
-    "admin:hash": "tsx scripts/hash-password.ts"
+    "admin:hash": "tsx scripts/hash-password.ts",
+    "vercel-build": "bash scripts/vercel-build.sh"
   },
   "dependencies": {
     "@prisma/client": "6.16.2",
@@ -38,5 +39,8 @@
     "tsx": "4.20.5",
     "typescript": "5.9.2",
     "vitest": "3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
