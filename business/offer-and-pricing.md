@@ -31,6 +31,7 @@ flip the filter in `webbiz/prospect.py` if you want to target those later).
 At 20 Starter clients that's ~$6k in setup fees + ~$580/month recurring, almost all margin.
 
 ## Getting paid
-Send a Stripe Payment Link (or PayPal invoice) for the setup fee, and a Stripe
-subscription link for the monthly fee. Don't put the site on their domain until the
-setup fee is paid.
+Connect Stripe in the dashboard (Settings → Getting paid). Every "yes" reply then carries that
+business's own payment link for the setup fee + monthly subscription, and the site goes live
+by itself as soon as they pay. The final site only goes online after payment, so nobody gets
+the finished product for free.

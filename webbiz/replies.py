@@ -146,6 +146,8 @@ def _money(v):
 
 
 def facts(cfg, lead):
+    from . import clients  # late import: clients -> outreach -> replies
+    pay = clients.pay_url(cfg, lead)
     return {
         "name": lead["name"],
         "your_name": cfg["your_name"],
@@ -156,8 +158,8 @@ def facts(cfg, lead):
         "preview": preview_url(cfg, lead["slug"]) if lead["slug"] else "",
         "included": cfg["included"].strip(),
         "phone_line": f"\nOr call me on {cfg['phone']}." if cfg["phone"] else "",
-        "pay_step": (f"Pay the {_money(cfg['price_setup'])} setup fee here: {cfg['payment_link']}"
-                     if cfg["payment_link"] else
+        "pay_step": (f"Pay the {_money(cfg['price_setup'])} setup fee here: {pay}"
+                     if pay else
                      f"Reply \"go ahead\" and I'll send you an invoice for the {_money(cfg['price_setup'])} setup fee"),
     }
 
@@ -408,7 +410,7 @@ def process(conn, cfg, message_id, headers=None, log=print, send=None):
     if intent in HUMAN_ALWAYS and not human_reason:
         human_reason = {"complaint": "They're upset — consider whether to reply personally.",
                         "legal": "Mentions legal action. They've been added to do-not-contact; don't reply without advice.",
-                        "payment_done": "Check the payment arrived, then mark the lead Won.",
+                        "payment_done": "Check the payment arrived, then click Mark as paid on their page (Stripe payments are picked up automatically).",
                         "negotiating": "Decide whether to offer a discount.",
                         "custom_request": "They want something beyond the standard site — quote it yourself.",
                         "wants_call": "They'd like to talk — arrange a call.",

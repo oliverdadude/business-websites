@@ -4,6 +4,7 @@ import re
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import unittest
 from datetime import timedelta
@@ -15,7 +16,7 @@ import io
 import os
 import zipfile
 
-from webbiz import admin, config, db, demo, hours, importer, outreach, prospect, publish, replies, sitegen
+from webbiz import admin, clients, config, db, demo, hours, importer, outreach, prospect, publish, replies, sitegen
 
 
 def make_cfg(**over):
@@ -605,6 +606,169 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(deploy.full_url.endswith("/sites/site123/deploys"))
         names = zipfile.ZipFile(io.BytesIO(deploy.data)).namelist()
         self.assertEqual(sorted(names), ["index.html", "robots.txt", "rosa-1/index.html"])
+
+
+class FakeHTTP:
+    """Stands in for Stripe and Netlify: routes (method, url) to canned JSON and records each request."""
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+    def __call__(self, req, timeout=None):
+        self.calls.append(req)
+        method, url = req.get_method(), req.full_url
+        for (m, pattern), body in self.routes.items():
+            if m == method and re.search(pattern, url):
+                body = body(req) if callable(body) else body
+                if isinstance(body, Exception):
+                    raise body
+                return mock.MagicMock(__enter__=lambda s, b=body: io.BytesIO(json.dumps(b).encode()),
+                                      __exit__=lambda *a: None)
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    def find(self, method, pattern):
+        return [c for c in self.calls if c.get_method() == method and re.search(pattern, c.full_url)]
+
+
+def form(req):
+    return dict(urllib.parse.parse_qsl(req.data.decode()))
+
+
+class ClientTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.root_patch = mock.patch.object(config, "ROOT", Path(self.tmp.name))
+        self.root_patch.start()
+        self.find()
+        sitegen.build(self.conn, self.cfg, Path(self.tmp.name) / "sites")
+        self.rosa = self.conn.execute("SELECT * FROM leads WHERE name=\"Rosa's Bakery\"").fetchone()
+        self.cfg.update(stripe_key="sk_test_123", netlify_token="ntok")
+        self.http = FakeHTTP({
+            ("POST", r"/v1/products$"): {"id": "prod_1"},
+            ("POST", r"/v1/prices$"): lambda r: {"id": "price_" + ("m" if "recurring[interval]" in form(r) else "s")},
+            ("POST", r"/v1/payment_links$"): {"id": "plink_1", "url": "https://buy.stripe.com/test_abc"},
+            ("POST", r"/v1/payment_links/plink_old$"): {"id": "plink_old", "active": False},
+            ("GET", r"/v1/checkout/sessions"): {"has_more": False, "data": [
+                {"id": "cs_1", "payment_status": "paid", "client_reference_id": f"webbiz-{self.rosa['id']}",
+                 "amount_total": 32800, "customer": "cus_1", "subscription": "sub_1"},
+                {"id": "cs_2", "payment_status": "unpaid", "client_reference_id": "webbiz-999"},
+                {"id": "cs_3", "payment_status": "paid", "client_reference_id": None, "metadata": {}}]},
+            ("GET", r"/v1/subscriptions/sub_1$"): {"id": "sub_1", "status": "past_due"},
+            ("POST", r"api.netlify.com/api/v1/sites$"): {"id": "site_rosa", "ssl_url": "https://rosas-bakery.netlify.app"},
+            ("POST", r"/sites/site_rosa/deploys$"): {"state": "uploaded"},
+            ("PATCH", r"/sites/site_rosa$"): {"id": "site_rosa", "default_domain": "rosas-bakery.netlify.app"},
+        })
+        self.urlopen = mock.patch.object(urllib.request, "urlopen", self.http)
+        self.urlopen.start()
+        self.smtp = mock.patch.object(outreach.smtplib, "SMTP")
+        self.smtp_mock = self.smtp.start()
+
+    def tearDown(self):
+        self.smtp.stop()
+        self.urlopen.stop()
+        self.root_patch.stop()
+        super().tearDown()
+
+    def sent_bodies(self):
+        return [c.args[0].get_content() for c in self.smtp_mock.return_value.send_message.call_args_list]
+
+    def test_form_encoding_nests_like_stripe(self):
+        self.assertEqual(clients._form({"a": 1, "line_items": [{"price": "p", "quantity": 1}], "b": {"c": True}}),
+                         [("a", "1"), ("line_items[0][price]", "p"), ("line_items[0][quantity]", "1"), ("b[c]", "true")])
+
+    def test_connect_stripe_creates_link_and_tags_each_lead(self):
+        self.cfg["stripe_payment_link_id"] = "plink_old"
+        url = clients.connect_stripe(self.cfg)
+        self.assertEqual(url, "https://buy.stripe.com/test_abc")
+        prices = [form(r) for r in self.http.find("POST", r"/v1/prices$")]
+        self.assertEqual([p["unit_amount"] for p in prices], ["29900", "2900"])
+        self.assertEqual(prices[1]["recurring[interval]"], "month")
+        link = form(self.http.find("POST", r"/v1/payment_links$")[0])
+        self.assertEqual((link["line_items[0][price]"], link["line_items[1][price]"]), ("price_s", "price_m"))
+        self.assertEqual(form(self.http.find("POST", r"plink_old")[0]), {"active": "false"})  # old link retired
+        self.assertEqual(config.load()["stripe_payment_link_url"], url)
+        self.assertEqual(self.http.calls[0].get_header("Authorization"), "Bearer sk_test_123")
+        pay = clients.pay_url(self.cfg, self.rosa)
+        self.assertIn(f"client_reference_id=webbiz-{self.rosa['id']}", pay)
+        self.assertIn("prefilled_email=rosa%40gmail.com", pay)
+        self.assertIn(pay, replies.draft_from_template("interested", self.rosa, self.cfg))
+
+    def test_payment_puts_site_live_and_welcomes_client(self):
+        new = clients.check_payments(self.conn, self.cfg, log=lambda *a: None)
+        self.assertEqual(new, [self.rosa["id"]])
+        c = clients.get(self.conn, self.rosa["id"])
+        self.assertEqual((c["paid_via"], c["setup_paid"], c["stripe_subscription"]), ("stripe", 328.0, "sub_1"))
+        self.assertEqual(c["live_url"], "https://rosas-bakery.netlify.app")
+        self.assertTrue(c["went_live_at"] and c["welcome_sent_at"])
+        self.assertEqual(c["last_error"], "")
+        self.assertEqual(self.conn.execute("SELECT status FROM leads WHERE id=?", (self.rosa["id"],)).fetchone()[0], "won")
+        deployed = zipfile.ZipFile(io.BytesIO(self.http.find("POST", r"/deploys$")[0].data))
+        page = deployed.read("index.html").decode()
+        self.assertNotIn('class="preview-bar"', page)
+        self.assertNotIn("noindex", page)
+        self.assertIn("Allow: /", deployed.read("robots.txt").decode())
+        self.assertIn("https://rosas-bakery.netlify.app", self.sent_bodies()[0])
+        self.assertEqual(self.conn.execute("SELECT kind FROM messages WHERE lead_id=?", (self.rosa["id"],)).fetchone()[0],
+                         "welcome")
+        # Running again doesn't double-charge, re-deploy or re-email.
+        self.assertEqual(clients.check_payments(self.conn, self.cfg, log=lambda *a: None), [])
+        self.assertEqual(len(self.http.find("POST", r"/deploys$")), 1)
+        self.assertEqual(len(self.sent_bodies()), 1)
+
+    def test_failed_subscription_is_flagged_and_owner_emailed(self):
+        clients.check_payments(self.conn, self.cfg, log=lambda *a: None)
+        changed = clients.check_subscriptions(self.conn, self.cfg, log=lambda *a: None)
+        self.assertEqual(changed, [("Rosa's Bakery", "past_due")])
+        self.assertEqual(clients.get(self.conn, self.rosa["id"])["billing"], "past_due")
+        self.assertIn("payment failed", self.sent_bodies()[-1])
+        self.assertEqual(clients.overview(self.conn, self.cfg)["mrr"], 0)
+
+    def test_manual_payment_without_hosting_keeps_final_site_and_flags(self):
+        self.cfg["netlify_token"] = ""
+        c = clients.mark_paid(self.conn, self.cfg, self.rosa["id"], 250, log=lambda *a: None)
+        self.assertEqual((c["paid_via"], c["setup_paid"], c["live_url"]), ("manual", 250.0, ""))
+        self.assertIn("Connect Netlify", c["last_error"])
+        self.assertTrue((Path(self.tmp.name) / "output" / "live" / self.rosa["slug"] / "index.html").exists())
+        self.assertEqual(self.sent_bodies(), [])  # no welcome email without a live link
+        with self.assertRaises(ValueError):
+            clients.mark_paid(self.conn, self.cfg, self.rosa["id"])
+
+    def test_custom_domain(self):
+        clients.mark_paid(self.conn, self.cfg, self.rosa["id"], log=lambda *a: None)
+        with self.assertRaises(ValueError):
+            clients.set_domain(self.conn, self.cfg, self.rosa["id"], "not a domain")
+        res = clients.set_domain(self.conn, self.cfg, self.rosa["id"], "https://www.RosasBakery.com/", email_client=True)
+        self.assertEqual(res["domain"], "rosasbakery.com")
+        self.assertEqual(res["records"], [("A", "@", "75.2.60.5"), ("CNAME", "www", "rosas-bakery.netlify.app")])
+        self.assertEqual(json.loads(self.http.find("PATCH", r"/sites/site_rosa$")[0].data), {"custom_domain": "rosasbakery.com"})
+        self.assertEqual(clients.get(self.conn, self.rosa["id"])["live_url"], "https://rosasbakery.com")
+        self.assertIn("CNAME  www    rosas-bakery.netlify.app", self.sent_bodies()[-1])
+
+    def test_admin_client_endpoints_and_live_edits(self):
+        self.cfg.update(db_path=str(Path(self.tmp.name) / "t.db"))
+        app = admin.App(self.cfg)
+        lead_id = self.rosa["id"]
+        d = app.route("GET", f"/api/leads/{lead_id}", {}, {})
+        self.assertIsNone(d["client"])
+        d = app.route("POST", f"/api/clients/{lead_id}/paid", {}, {"amount": "300"})
+        self.assertEqual(d["client"]["live_url"], "https://rosas-bakery.netlify.app")
+        self.assertEqual(app.route("GET", "/api/clients", {}, {})["paying"], 1)
+        self.assertEqual(app.route("GET", "/api/stats", {}, {})["clients"]["mrr"], 29)
+        app.route("POST", f"/api/leads/{lead_id}", {}, {"phone": "555 0199", "rebuild": True})
+        self.assertEqual(len(self.http.find("POST", r"/deploys$")), 2)  # edits went straight to the live site
+        self.assertIn("555 0199", zipfile.ZipFile(io.BytesIO(self.http.find("POST", r"/deploys$")[-1].data))
+                      .read("index.html").decode())
+        with self.assertRaises(ValueError):
+            app.route("POST", f"/api/clients/{lead_id}/billing", {}, {"billing": "free"})
+        app.route("POST", f"/api/clients/{lead_id}/billing", {}, {"billing": "cancelled"})
+        self.assertEqual(app.route("GET", "/api/clients", {}, {})["paying"], 0)
+
+    def test_sync_recreates_link_when_prices_change(self):
+        clients.connect_stripe(self.cfg)
+        self.cfg["price_monthly"] = 39
+        logs = []
+        clients.sync(self.conn, self.cfg, log=logs.append)
+        self.assertEqual(len(self.http.find("POST", r"/v1/payment_links$")), 2)
+        self.assertTrue(any("prices changed" in l for l in logs))
 
 
 if __name__ == "__main__":

@@ -45,6 +45,25 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_lead ON messages(lead_id, created_at);
+-- Paying customers (see webbiz/clients.py). billing: active | past_due | cancelled
+CREATE TABLE IF NOT EXISTS clients (
+    lead_id INTEGER PRIMARY KEY REFERENCES leads(id),
+    billing TEXT NOT NULL DEFAULT 'active',
+    paid_via TEXT NOT NULL DEFAULT 'manual',
+    setup_paid REAL NOT NULL DEFAULT 0,
+    monthly REAL NOT NULL DEFAULT 0,
+    stripe_session TEXT UNIQUE,
+    stripe_customer TEXT DEFAULT '',
+    stripe_subscription TEXT DEFAULT '',
+    site_id TEXT DEFAULT '',
+    live_url TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    went_live_at TEXT,
+    welcome_sent_at TEXT,
+    last_error TEXT DEFAULT '',
+    paid_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 # Columns added after the first release; added to existing databases on connect.
@@ -119,3 +138,13 @@ def add_message(conn, lead_id, direction, kind, msg_id, subject="", body="", fro
          int(direction == "out") if is_read is None else int(is_read), created_at or now()))
     conn.commit()
     return cur.rowcount == 1
+
+
+def get_meta(conn, key, default=None):
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_meta(conn, key, value):
+    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, str(value)))
+    conn.commit()

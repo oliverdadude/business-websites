@@ -10,8 +10,11 @@ An automated pipeline for a small web-design business:
    (food, beauty, trades, health, auto, fitness, stays, professional, retail).
 4. **Email** them the link with your offer, and send one polite follow-up.
 5. **Sync** your inbox: replies stop follow-ups, opt-outs and bounces are suppressed forever.
+6. **Get paid and deliver, hands-off:** each business gets its own Stripe payment link. When
+   they pay, their finished site goes live on its own address, they get a welcome email, and
+   their monthly subscription is tracked. Failed payments and cancellations are flagged to you.
 
-6. **Admin dashboard** to run all of this from your browser: a mailbox for every email
+7. **Admin dashboard** to run all of this from your browser: a mailbox for every email
    sent and received, a live preview of each business's website, and a pipeline tracker.
 
 Business side: see [`business/offer-and-pricing.md`](business/offer-and-pricing.md) and
@@ -56,6 +59,8 @@ python -m webbiz admin --demo     # try it with sample data first (separate demo
   - **Download final**, which gives you the site without the "free preview" banner, ready to hand over
 - **Mailbox**: Inbox (replies, opt-outs, bounces), Sent, and Queued (what the next send will
   email). Unread replies are highlighted and counted in the sidebar.
+- **Clients**: everyone who paid, their live website, monthly recurring revenue, and anything
+  that needs you (a site that isn't live yet, a failed card).
 - **Websites**: a gallery of every site you've built.
 
 The dashboard only listens on your own computer by default. To open it from another device,
@@ -90,6 +95,34 @@ Every reply from a lead is sorted into one of these situations, and each gets a 
   first, and the AI can't overrule them.
 - **Checks your inbox** every 10 minutes while the dashboard is open, and emails you a short
   summary when a reply needs you personally.
+
+## Getting paid and delivering the site
+
+Connect Stripe in **Settings → 6. Getting paid** (paste your secret key, click **Connect Stripe**).
+webbiz creates the product, the setup + monthly prices and a Payment Link for you. From then on:
+
+| When | What happens automatically |
+|---|---|
+| A lead says "let's go" | The reply includes **their own** payment link, tagged with their lead id |
+| They pay | Found on the next sync (every 10 minutes while the dashboard is open, or `python -m webbiz payments`). The lead becomes a client |
+| Straight after | Their final site (no preview banner, visible to Google) is published to its own Netlify site, and a welcome email goes out with the live link and next steps |
+| You edit their details | "Save & rebuild" updates their live site too |
+| They send their domain | Type it on their page and click **Connect**. It's attached to their site, and webbiz can email them the two DNS records to set. HTTPS is added by Netlify |
+| A card fails or they cancel | The client is flagged on the Clients page and you get an email |
+| You change your prices | A new payment link is made on the next sync |
+
+Paid another way (bank transfer, cash)? Click **Mark as paid & go live** on the lead's page,
+or run `python -m webbiz paid ID`, and the same steps run.
+
+Use your `sk_test_...` key first to try the whole flow with Stripe's test card `4242 4242 4242 4242`.
+
+```bash
+python -m webbiz payments                       # check for new payments + billing problems
+python -m webbiz paid 12 --amount 299           # record a payment made another way
+python -m webbiz golive 12                      # re-publish a client's site
+python -m webbiz domain 12 rosasbakery.com --email
+python -m webbiz clients                        # clients and monthly recurring revenue
+```
 
 ## Website designs
 

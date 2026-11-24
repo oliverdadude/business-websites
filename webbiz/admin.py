@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import config, db, outreach, prospect, publish, replies, sitegen
+from . import clients, config, db, outreach, prospect, publish, replies, sitegen
 
 PAGE = Path(__file__).parent / "templates" / "admin.html"
 LEAD_FIELDS = ("name", "email", "category", "phone", "address", "city", "opening_hours", "notes")
@@ -68,6 +68,7 @@ class App:
             "needs_you": conn.execute("SELECT COUNT(*) FROM messages WHERE direction='in' AND "
                                       "reply_state='needs_you'").fetchone()[0],
             "reply_mode": self.cfg["reply_mode"], "ai": replies.ai_available(self.cfg),
+            "clients": {k: v for k, v in clients.overview(conn, self.cfg).items() if k != "clients"},
         }
 
     def leads(self, conn, q):
@@ -100,7 +101,10 @@ class App:
         if lead_id in due:
             msg = outreach.compose(row, self.cfg, due[lead_id])
             draft = {"step": due[lead_id], "subject": msg["Subject"], "body": msg.get_content()}
-        return {"lead": lead, "messages": messages, "next_email": draft, "statuses": db.STATUSES}
+        lead["pay_url"] = clients.pay_url(self.cfg, lead)
+        return {"lead": lead, "messages": messages, "next_email": draft, "statuses": db.STATUSES,
+                "client": clients.get(conn, lead_id), "netlify": bool(self.cfg["netlify_token"]),
+                "currency": self.cfg["currency"]}
 
     def mailbox(self, conn, q):
         folder = q.get("folder", "inbox")
@@ -137,6 +141,7 @@ class App:
         if body.get("rebuild"):
             row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
             sitegen.build_one(conn, self.cfg, self.sites_dir, row)
+            clients.redeploy_if_live(conn, self.cfg, lead_id, log=lambda *a: None)  # a client's live site gets the edits too
         return self.lead(conn, lead_id)
 
     def mark_read(self, conn, lead_id):
@@ -163,6 +168,38 @@ class App:
         row = conn.execute("SELECT email FROM leads WHERE id=?", (lead_id,)).fetchone()
         db.suppress(conn, row["email"], "opt-out")
         return self.lead(conn, lead_id)
+
+    def client_action(self, conn, lead_id, name, body):
+        if not conn.execute("SELECT 1 FROM leads WHERE id=?", (lead_id,)).fetchone():
+            raise LookupError("lead not found")
+        log = []
+        if name == "paid":
+            amount = body.get("amount")
+            clients.mark_paid(conn, self.cfg, lead_id, float(amount) if amount not in (None, "") else None,
+                              log=log.append)
+        elif name == "golive":
+            client = clients.get(conn, lead_id)
+            if not client:
+                raise ValueError("Mark this business as paid first.")
+            if client["went_live_at"]:
+                clients.go_live(conn, self.cfg, lead_id, log=log.append)
+            else:  # first time: also sends the welcome email
+                clients.onboard(conn, self.cfg, lead_id, log=log.append)
+        elif name == "welcome":
+            clients.send_welcome(conn, self.cfg, lead_id)
+            log.append("Welcome email sent.")
+        elif name == "domain":
+            res = clients.set_domain(conn, self.cfg, lead_id, body.get("domain", ""), bool(body.get("email_client")))
+            log.append(f"{res['domain']} connected." + (" DNS steps emailed to the client." if body.get("email_client") else ""))
+            return dict(self.lead(conn, lead_id), log=log, records=res["records"])
+        elif name == "billing":
+            if body.get("billing") not in ("active", "past_due", "cancelled"):
+                raise ValueError("billing must be active, past_due or cancelled")
+            conn.execute("UPDATE clients SET billing=? WHERE lead_id=?", (body["billing"], lead_id))
+            conn.commit()
+        else:
+            raise LookupError("unknown client action")
+        return dict(self.lead(conn, lead_id), log=log)
 
     def start_action(self, name, body):
         """Run a pipeline step in the background; the UI polls /api/job for its log."""
@@ -196,7 +233,9 @@ class App:
                 limit = int(body["limit"]) if body.get("limit") else None
                 outreach.send(conn, self.cfg, live=bool(body.get("live")), limit=limit, log=log)
             elif name == "sync":
-                outreach.sync_replies(conn, self.cfg, log=log)
+                if self.cfg["imap"]["host"] and self.cfg["imap"]["password"]:
+                    outreach.sync_replies(conn, self.cfg, log=log)
+                clients.sync(conn, self.cfg, log=log)
         except SystemExit as exc:  # CLI-style errors from the pipeline
             job["error"] = str(exc)
         except Exception as exc:
@@ -210,11 +249,11 @@ class App:
     SETTINGS = ("business_name", "your_name", "reply_to_email", "phone", "postal_address", "preview_base_url",
                 "price_setup", "price_monthly", "daily_send_limit", "followup_after_days", "max_emails_per_lead",
                 "reply_mode", "payment_link", "turnaround_days", "included", "reply_faq", "auto_sync_minutes",
-                "notify_needs_you")
+                "notify_needs_you", "currency")
     NUMBERS = {"price_setup": (0, 100000), "price_monthly": (0, 10000), "daily_send_limit": (1, 500),
                "followup_after_days": (1, 60), "max_emails_per_lead": (1, 2), "turnaround_days": (1, 60),
                "auto_sync_minutes": (0, 1440)}
-    CHOICES = {"reply_mode": ("review", "auto")}
+    CHOICES = {"reply_mode": ("review", "auto"), "currency": ("usd", "gbp", "eur", "cad", "aud", "nzd")}
     BOOLS = ("notify_needs_you",)
 
     def settings(self):
@@ -224,6 +263,8 @@ class App:
             "email": {"smtp_host": smtp["host"], "smtp_port": smtp["port"], "smtp_user": smtp["user"],
                       "imap_host": imap["host"], "has_password": bool(smtp["password"])},
             "netlify": {"has_token": bool(self.cfg["netlify_token"]), "site_id": self.cfg["netlify_site_id"]},
+            "stripe": {"has_key": bool(self.cfg["stripe_key"]), "link": self.cfg["stripe_payment_link_url"],
+                       "test_mode": self.cfg["stripe_key"].startswith(("sk_test", "rk_test"))},
             "ai": {"has_key": bool(self.cfg["anthropic_api_key"]), "ready": replies.ai_available(self.cfg),
                    "package": _has_anthropic()},
             "configured": self.cfg["configured"], "ready": outreach.check_ready(self.cfg),
@@ -282,6 +323,11 @@ class App:
             secrets["ANTHROPIC_API_KEY"] = body["ai"]["api_key"].strip()
         if (body.get("ai") or {}).get("remove_key"):
             secrets["ANTHROPIC_API_KEY"] = ""
+        if (body.get("stripe") or {}).get("key"):
+            key = body["stripe"]["key"].strip()
+            if not key.startswith(("sk_", "rk_")):
+                raise ValueError("That isn't a Stripe secret key. It starts with sk_live_ or sk_test_.")
+            secrets["STRIPE_SECRET_KEY"] = key
         if (body.get("netlify") or {}).get("token"):
             secrets["NETLIFY_TOKEN"] = body["netlify"]["token"].strip()
         config.save(values or {"business_name": self.cfg["business_name"]}, secrets)
@@ -307,6 +353,11 @@ class App:
                            "body": "Looks lovely! Do I own the web address, and could you add our cake menu?"}
                 result = replies.classify_ai(self.cfg, lead, [], inbound)
                 return {"message": "AI is working.", "sample": inbound["body"], **result}
+            if name == "connect-stripe":
+                if not self.cfg["stripe_key"]:
+                    raise ValueError("Paste your Stripe secret key and save first.")
+                url = clients.connect_stripe(self.cfg)
+                return {"message": "Stripe connected! Every business now gets its own payment link.", "url": url}
             if name == "connect-netlify":
                 if not self.cfg["netlify_token"]:
                     raise ValueError("Paste your Netlify token and save first.")
@@ -333,11 +384,15 @@ class App:
                     return self.settings()
                 if path == "/api/mailbox":
                     return self.mailbox(conn, query)
+                if path == "/api/clients":
+                    return clients.overview(conn, self.cfg)
                 if m := re.fullmatch(r"/api/leads/(\d+)", path):
                     return self.lead(conn, int(m[1]))
             elif method == "POST":
                 if m := re.fullmatch(r"/api/leads/(\d+)", path):
                     return self.update_lead(conn, int(m[1]), body)
+                if m := re.fullmatch(r"/api/clients/(\d+)/(paid|golive|welcome|domain|billing)", path):
+                    return self.client_action(conn, int(m[1]), m[2], body)
                 if m := re.fullmatch(r"/api/messages/(\d+)/dismiss", path):
                     return self.dismiss(conn, int(m[1]))
                 if m := re.fullmatch(r"/api/leads/(\d+)/(read|reply|optout)", path):
@@ -438,6 +493,8 @@ def make_handler(app):
                 self._send(404, {"error": str(exc)})
             except (ValueError, RuntimeError) as exc:
                 self._send(400, {"error": str(exc)})
+            except SystemExit as exc:  # pipeline "not ready" messages, e.g. email not set up
+                self._send(400, {"error": str(exc)})
             except Exception as exc:  # surface unexpected errors in the UI rather than hanging
                 traceback.print_exc()
                 self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -479,12 +536,13 @@ def serve(cfg, host="127.0.0.1", port=8080, open_browser=False):
 
 
 def _auto_sync(app):
-    """While the dashboard runs, check the inbox every `auto_sync_minutes` so replies are handled promptly."""
+    """While the dashboard runs, check the inbox and payments every `auto_sync_minutes`."""
     import time
     while True:
         minutes = app.cfg["auto_sync_minutes"]
         time.sleep(max(minutes, 1) * 60)
-        if not minutes or not app.cfg["imap"]["host"] or not app.cfg["imap"]["password"]:
+        inbox = app.cfg["imap"]["host"] and app.cfg["imap"]["password"]
+        if not minutes or not (inbox or app.cfg["stripe_key"]):
             continue
         try:
             app.start_action("sync", {})

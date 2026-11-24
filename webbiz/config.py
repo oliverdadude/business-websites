@@ -32,13 +32,19 @@ DEFAULTS = {
     "reply_faq": "",                 # extra facts for the AI, e.g. "We also do logos for $99."
     "auto_sync_minutes": 10,         # how often the dashboard checks your inbox (0 = off)
     "notify_needs_you": True,        # email yourself when a reply needs your attention
+    # Getting paid and delivering (see webbiz/clients.py)
+    "currency": "usd",
+    "stripe_payment_link_url": "",   # created for you by "Connect Stripe"
+    "stripe_payment_link_id": "",
+    "stripe_link_prices": "",        # the setup/monthly prices that link charges
     "db_path": "data/leads.db",
     "sites_dir": "output/sites",
 }
 
 # Secrets live in .env (or real environment variables, which take precedence), never in config.json.
 SECRET_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM",
-               "IMAP_HOST", "IMAP_USER", "IMAP_PASS", "NETLIFY_TOKEN", "ANTHROPIC_API_KEY")
+               "IMAP_HOST", "IMAP_USER", "IMAP_PASS", "NETLIFY_TOKEN", "ANTHROPIC_API_KEY",
+               "STRIPE_SECRET_KEY")
 
 
 def read_env_file(path=None):
@@ -74,6 +80,7 @@ def load(path=None):
     }
     cfg["netlify_token"] = env("NETLIFY_TOKEN")
     cfg["anthropic_api_key"] = env("ANTHROPIC_API_KEY")
+    cfg["stripe_key"] = env("STRIPE_SECRET_KEY")
     cfg["configured"] = path.exists()
     return cfg
 

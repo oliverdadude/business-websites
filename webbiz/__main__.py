@@ -7,6 +7,11 @@
   python -m webbiz publish                             upload output/sites using publish_command
   python -m webbiz sync                                read your inbox: mark replies, opt-outs, bounces
   python -m webbiz run "Bend, Oregon" [--live]         find + build + send in one go (good for cron)
+  python -m webbiz payments                            check Stripe: onboard new payers, flag failed/cancelled billing
+  python -m webbiz paid ID [--amount N]                record a payment by hand -> site goes live + welcome email
+  python -m webbiz golive ID                           (re)publish a client's final site
+  python -m webbiz domain ID example.com [--email]     connect a client's domain (and email them DNS steps)
+  python -m webbiz clients                             paying customers and monthly revenue
   python -m webbiz leads [--status S]                  list leads
   python -m webbiz mark ID won|lost|replied|skipped    update a lead by hand
   python -m webbiz optout EMAIL                        never email this address again
@@ -16,7 +21,7 @@
 import argparse
 import sys
 
-from . import config, db, importer, outreach, prospect, publish, sitegen
+from . import clients, config, db, importer, outreach, prospect, publish, sitegen
 
 
 def main(argv=None):
@@ -47,6 +52,18 @@ def main(argv=None):
     r.add_argument("--radius", type=float, default=10)
     r.add_argument("--live", action="store_true")
     r.add_argument("--limit", type=int)
+
+    sub.add_parser("payments", help="check Stripe for new payments and billing problems")
+    pd = sub.add_parser("paid", help="record a payment by hand and deliver the site")
+    pd.add_argument("id", type=int)
+    pd.add_argument("--amount", type=float, help="amount received (default: setup + first month)")
+    g = sub.add_parser("golive", help="publish (or re-publish) a client's final site")
+    g.add_argument("id", type=int)
+    d = sub.add_parser("domain", help="connect a client's own domain")
+    d.add_argument("id", type=int)
+    d.add_argument("domain")
+    d.add_argument("--email", action="store_true", help="email the client the DNS settings")
+    sub.add_parser("clients", help="paying customers and revenue")
 
     l = sub.add_parser("leads", help="list leads")
     l.add_argument("--status", choices=db.STATUSES)
@@ -91,9 +108,35 @@ def main(argv=None):
             raise SystemExit(str(exc))
     elif args.cmd == "sync":
         outreach.sync_replies(conn, cfg)
+        clients.sync(conn, cfg)
+    elif args.cmd == "payments":
+        if not cfg["stripe_key"]:
+            raise SystemExit("Add your Stripe secret key in Settings (or STRIPE_SECRET_KEY in .env) first.")
+        clients.sync(conn, cfg)
+    elif args.cmd in ("paid", "golive", "domain"):
+        try:
+            if args.cmd == "paid":
+                c = clients.mark_paid(conn, cfg, args.id, args.amount)
+                print(f"Client recorded. Live at: {c['live_url'] or '(not yet - see above)'}")
+            elif args.cmd == "golive":
+                clients.go_live(conn, cfg, args.id)
+            else:
+                res = clients.set_domain(conn, cfg, args.id, args.domain, email_client=args.email)
+                print(f"{res['domain']} attached. DNS records the owner needs:")
+                for kind, name, value in res["records"]:
+                    print(f"  {kind:<6} {name:<4} {value}")
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+    elif args.cmd == "clients":
+        o = clients.overview(conn, cfg)
+        for c in o["clients"]:
+            print(f"{c['lead_id']:>4}  {c['billing']:<10} {c['name'][:30]:<30} {c['live_url'] or '(not live)'}")
+        print(f"\n{o['paying']} paying, {clients._money(cfg, o['mrr'])}/month recurring, "
+              f"{clients._money(cfg, o['collected'])} collected")
     elif args.cmd == "run":
         if cfg["imap"]["host"]:
             outreach.sync_replies(conn, cfg)  # never follow up on someone who already replied
+        clients.sync(conn, cfg)  # new payers go live and get their welcome email
         if args.area:
             prospect.find(conn, cfg, args.area, args.radius)
         built = sitegen.build(conn, cfg, sites_dir)

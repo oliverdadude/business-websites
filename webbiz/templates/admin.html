@@ -177,6 +177,12 @@
   .welcome { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; border-radius: var(--radius); padding: 22px 24px; margin-bottom: 20px; }
   .welcome h2 { margin: 0 0 4px; font-size: 18px; } .welcome p { margin: 0; opacity: .9; }
   @media (max-width: 860px) { .steps { grid-template-columns: 1fr 1fr; } }
+  .checks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .checks > div { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; font-size: 13px; }
+  .checks .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: var(--line2); color: var(--muted); flex: none; }
+  .checks .done .n { background: #10b981; color: #fff; }
+  .checks small { display: block; font-weight: 500; color: var(--muted); font-size: 11.5px; }
+  @media (max-width: 860px) { .checks { grid-template-columns: 1fr 1fr; } }
   .toast { position: fixed; right: 20px; bottom: 20px; z-index: 50; background: var(--ink); color: #fff; padding: 11px 16px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.2); font-weight: 500; max-width: 420px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
   .toast.show { opacity: 1; transform: none; }
   .toast.err { background: var(--bad); }
@@ -203,6 +209,7 @@
     <nav class="nav">
       <a href="#/" data-nav="dash"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
       <a href="#/leads" data-nav="leads"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Leads</a>
+      <a href="#/clients" data-nav="clients"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Clients<span class="count" id="attn" hidden></span></a>
       <a href="#/mail/todo" data-nav="mail"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Mailbox<span class="count" id="unread" hidden></span></a>
       <a href="#/mail/todo" class="sub" data-nav="mail-todo">Needs reply<span class="count" id="todo" hidden></span></a>
       <a href="#/mail/inbox" class="sub" data-nav="mail-inbox">Inbox</a>
@@ -225,6 +232,10 @@ const LABEL = { new: "New", site_built: "Site ready", contacted: "Contacted", re
 const COLORS = { new: "#9ca3af", site_built: "#6366f1", contacted: "#3b82f6", replied: "#f59e0b", won: "#10b981", lost: "#d1d5db", skipped: "#e5e7eb", opted_out: "#f87171", bounced: "#fca5a5" };
 const pill = (s) => `<span class="pill s-${h(s)}">${h(LABEL[s] || s)}</span>`;
 const cat = (c) => (c || "").split("=").pop().split(";")[0].replace(/_/g, " ").replace(/^\w/, (m) => m.toUpperCase());
+const SYM = { usd: "$", cad: "$", aud: "$", nzd: "$", gbp: "£", eur: "€" };
+const money = (v, cur) => (SYM[cur] ?? "") + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }) + (SYM[cur] === undefined && cur ? " " + cur.toUpperCase() : "");
+const BILL = { active: ["Paying", "s-won"], past_due: ["Payment failed", "s-opted_out"], cancelled: ["Cancelled", "s-lost"] };
+const billPill = (b) => `<span class="pill ${BILL[b][1]}">${BILL[b][0]}</span>`;
 let state = { leadsFilter: "", leadsQuery: "", mailSel: null };
 
 function when(iso, long) {
@@ -263,6 +274,7 @@ async function refreshBadge() {
   const t = $("#todo"); t.hidden = !s.needs_reply; t.textContent = s.needs_reply;
   $("#bizname").textContent = s.business_name;
   $("#setupdot").hidden = !s.ready.length;
+  const a = $("#attn"); a.hidden = !s.clients.attention; a.textContent = s.clients.attention;
   return s;
 }
 
@@ -278,7 +290,7 @@ async function dashboard() {
     ["Sites ready", n("site_built"), "waiting to be emailed"],
     ["Contacted", contacted, `${s.sent_total} emails sent`],
     ["Needs reply", `<a href="#/mail/todo" style="color:inherit">${s.needs_reply}</a>`, s.needs_you ? `${s.needs_you} need you personally` : `${replyRate}% reply rate`],
-    ["Won", n("won"), "paying customers"],
+    ["Clients", `<a href="#/clients" style="color:inherit">${s.clients.paying}</a>`, `${money(s.clients.mrr, s.clients.currency)}/mo recurring`],
     ["Sent today", `${s.sent_today}<span class="muted" style="font-size:15px">/${s.daily_limit}</span>`, `${s.queue} queued for next send`],
   ];
   const order = ["new", "site_built", "contacted", "replied", "won", "lost", "opted_out", "bounced", "skipped"];
@@ -307,7 +319,7 @@ async function dashboard() {
         <div class="act"><div><b>3. Publish</b><span>${s.publish ? "Put your preview sites online." : 'Connect free hosting in <a href="#/settings">Settings</a> to enable.'}</span></div><button class="btn" data-act="publish" ${s.publish ? "" : "disabled"}>Publish</button></div>
         <div class="act"><div><b>4. Send emails</b><span>${s.queue} queued. Preview first; live send respects your daily limit.</span></div>
           <div class="row"><button class="btn" data-act="send">Preview</button><button class="btn primary" data-act="send" data-live="1" ${s.ready.length ? "disabled title='Finish setup first'" : ""}>Send live</button></div></div>
-        <div class="act"><div><b>5. Sync inbox</b><span>Pull in replies; opt-outs and bounces are handled automatically.</span></div><button class="btn" data-act="sync" ${s.imap ? "" : "disabled title='Set IMAP_HOST first'"}>Sync</button></div>
+        <div class="act"><div><b>5. Sync inbox & payments</b><span>Pull in replies (opt-outs and bounces are handled for you)${s.clients.stripe ? ", and put new payers' sites live" : ""}.</span></div><button class="btn" data-act="sync" ${s.imap || s.clients.stripe ? "" : "disabled title='Set up your inbox or Stripe first'"}>Sync</button></div>
         <div class="log" id="log" hidden></div>
       </div></div>
     </div>`;
@@ -365,7 +377,7 @@ async function leadsPage(params) {
 // ---------- Lead detail ----------
 function messageCard(m, i) {
   const out = m.direction === "out", long = (m.body || "").length > 420;
-  const kind = { outreach: "First email", followup: "Follow-up", reply: "You replied", auto_reply: "Auto-reply sent", inbound: "Reply", bounce: "Bounce" }[m.kind] || m.kind;
+  const kind = { outreach: "First email", followup: "Follow-up", reply: "You replied", auto_reply: "Auto-reply sent", inbound: "Reply", bounce: "Bounce", welcome: "Welcome email", dns: "Domain steps" }[m.kind] || m.kind;
   return `<div class="msg ${out ? "out" : "in"} ${!out && !m.is_read ? "unread" : ""}">
     <div class="mh"><span><span class="tag ${m.kind === "bounce" ? "bounce" : out ? "" : "in"}">${h(kind)}</span> <b>${h(out ? "You" : m.from_addr)}</b></span><span title="${h(when(m.created_at, true))}">${when(m.created_at)}</span></div>
     ${!out ? `<div class="row" style="gap:6px;margin-bottom:6px">${statePill(m)}${intentTag(m)}</div>` : ""}<div class="subj">${h(m.subject)}</div><pre class="${long ? "clamp" : ""}" id="mb${i}">${h(m.body)}</pre>${long ? `<button class="more" data-t="mb${i}">Show more</button>` : ""}</div>`;
@@ -390,6 +402,7 @@ async function leadPage(id) {
         <div class="frame-wrap" id="fw">${siteUrl ? `<iframe src="${siteUrl}?t=${Date.now()}" title="Website preview"></iframe>` : `<div class="nosite"><div><b>No website yet</b><br>Click “Build site” to generate one.</div></div>`}</div>
       </div>
       <div class="stack">
+        ${customerPanel(d)}
         <div class="panel"><div class="ph"><h2>Conversation</h2><span class="muted small">${d.messages.length} message${d.messages.length === 1 ? "" : "s"}</span></div><div class="pb thread">
           ${d.messages.map(messageCard).join("") || ""}
           ${d.next_email ? `<div class="msg draft"><div class="mh"><span><span class="tag">Queued · ${d.next_email.step === 1 ? "first email" : "follow-up"}</span></span><span>next send</span></div><div class="subj">${h(d.next_email.subject)}</div><pre class="clamp" id="draft">${h(d.next_email.body)}</pre><button class="more" data-t="draft">Show more</button></div>` : ""}
@@ -419,10 +432,97 @@ async function leadPage(id) {
   const fields = () => Object.fromEntries([...view.querySelectorAll("[data-f]")].map((el) => [el.dataset.f, el.value]));
   $("#save").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, fields()); toast("Saved"); }));
   $("#saveb").addEventListener("click", () => guard(async () => { await api("/api/leads/" + id, { ...fields(), rebuild: true }); toast("Saved and rebuilt"); leadPage(id); }));
+  bindCustomer(d, () => leadPage(id));
   if (!L.suppressed) {
     bindReply(id, pendingIn, () => leadPage(id));
     $("#optout").addEventListener("click", () => confirm(`Never email ${L.email} again?`) && guard(async () => { await api(`/api/leads/${id}/optout`, {}); toast("Added to do-not-contact list"); leadPage(id); }));
   }
+}
+
+// The "getting paid / customer" panel on a lead's page.
+function customerPanel(d) {
+  const L = d.lead, C = d.client;
+  if (!C) {
+    if (["opted_out", "bounced"].includes(L.status) || !L.slug) return "";
+    return `<div class="panel"><div class="ph"><h2>Getting paid</h2><span class="muted small">When they pay, the site goes live by itself</span></div><div class="pb">
+      ${L.pay_url ? `<label class="f">Their payment link (already in your "let's go" replies)<div class="row"><input class="in" id="paylink" readonly value="${h(L.pay_url)}" style="flex:1"><button class="btn sm" id="copypay">Copy</button></div></label>`
+        : `<p class="muted small" style="margin:0 0 10px">Connect Stripe in <a href="#/settings">Settings</a> and each business gets its own payment link. Payments are matched to them automatically.</p>`}
+      <div class="row" style="justify-content:space-between;margin-top:12px"><span class="muted small">Paid another way (transfer, cash, PayPal)?</span>
+        <span class="row"><input class="in" id="amount" type="number" min="0" step="0.01" placeholder="Amount" style="width:110px"><button class="btn primary" id="markpaid">Mark as paid & go live</button></span></div>
+    </div></div>`;
+  }
+  const live = C.live_url, steps = [
+    ["Paid", true, `${C.paid_via === "stripe" ? "Stripe" : "By hand"} · ${when(C.paid_at)}`],
+    ["Site live", !!C.went_live_at, C.went_live_at ? when(C.went_live_at) : d.netlify ? "" : "connect Netlify"],
+    ["Welcome email", !!C.welcome_sent_at, C.welcome_sent_at ? when(C.welcome_sent_at) : ""],
+    ["Own domain", !!C.domain, C.domain || "optional"],
+  ];
+  return `<div class="panel"><div class="ph"><h2>Customer</h2>${billPill(C.billing)}</div><div class="pb">
+    <div class="checks">${steps.map(([t, ok, sub]) => `<div class="${ok ? "done" : ""}"><span class="n">${ok ? "✓" : "·"}</span><span>${t}<small>${h(sub)}</small></span></div>`).join("")}</div>
+    ${C.last_error ? `<div class="banner" style="margin:12px 0 0"><div><b>Needs you:</b> ${h(C.last_error)}</div></div>` : ""}
+    ${live ? `<div class="row" style="margin-top:12px"><span class="muted small">Live at</span><a href="${h(live)}" target="_blank" rel="noopener"><b>${h(live.replace(/^https?:\/\//, ""))}</b> ↗</a></div>` : ""}
+    <div class="row" style="margin-top:12px;flex-wrap:wrap">
+      <button class="btn sm" id="golive">${C.went_live_at ? "Re-publish site" : "Put site live"}</button>
+      ${C.went_live_at ? `<button class="btn sm" id="welcome">${C.welcome_sent_at ? "Resend" : "Send"} welcome email</button>` : ""}
+      <select class="in" id="billing" style="width:auto;padding:5px 8px;font-size:13px">${Object.entries(BILL).map(([k, [l]]) => `<option value="${k}" ${k === C.billing ? "selected" : ""}>${l}</option>`).join("")}</select>
+    </div>
+    <div class="hr"></div>
+    <label class="f">Their own domain <span class="small">(e.g. rosasbakery.com)</span><input class="in" id="domain" value="${h(C.domain)}" placeholder="yourbusiness.com"></label>
+    <div class="row" style="justify-content:flex-end;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="setdomain" data-email="">Connect</button><button class="btn sm primary" id="setdomain2" data-email="1">Connect & email them the DNS steps</button></div>
+    <div id="dns"></div>
+    <div class="muted small" style="margin-top:8px">${C.monthly ? `${money(C.monthly, d.currency)}/month` : ""}${C.setup_paid ? ` · ${money(C.setup_paid, d.currency)} paid` : ""}. Edits you save below with “Save & rebuild” go straight to their live site.</div>
+  </div></div>`;
+}
+function bindCustomer(d, after) {
+  const id = d.lead.id, act = async (name, body, btn) => {
+    if (btn) { btn.disabled = true; btn.dataset.l = btn.textContent; btn.innerHTML = '<span class="spin"></span> Working'; }
+    try { const r = await api(`/api/clients/${id}/${name}`, body || {}); toast((r.log || []).join(" ") || "Done"); refreshBadge(); return r; }
+    finally { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.l; } }
+  };
+  const copy = $("#copypay");
+  if (copy) copy.addEventListener("click", () => { $("#paylink").select(); navigator.clipboard?.writeText($("#paylink").value); toast("Payment link copied"); });
+  const paid = $("#markpaid");
+  if (paid) paid.addEventListener("click", () => confirm(`Record a payment from ${d.lead.name}? Their site goes live and they get a welcome email.`) && guard(async () => { await act("paid", { amount: $("#amount").value }, paid); after(); }));
+  const gl = $("#golive"); if (gl) gl.addEventListener("click", () => guard(async () => { await act("golive", {}, gl); after(); }));
+  const wl = $("#welcome"); if (wl) wl.addEventListener("click", () => guard(async () => { await act("welcome", {}, wl); after(); }));
+  const bl = $("#billing"); if (bl) bl.addEventListener("change", () => guard(async () => { await act("billing", { billing: bl.value }); after(); }));
+  ["#setdomain", "#setdomain2"].forEach((sel) => { const b = $(sel); if (b) b.addEventListener("click", () => guard(async () => {
+    const r = await act("domain", { domain: $("#domain").value, email_client: !!b.dataset.email }, b);
+    $("#dns").innerHTML = `<div class="help" style="margin-top:10px"><b>DNS settings for ${h($("#domain").value)}</b> (at their domain registrar):<table class="t" style="margin-top:6px">${r.records.map(([t, n, v]) => `<tr><td>${t}</td><td>${n}</td><td><code>${h(v)}</code></td></tr>`).join("")}</table></div>`;
+  })); });
+}
+
+// ---------- Clients ----------
+async function clientsPage() {
+  setNav("clients");
+  const o = await api("/api/clients"), cur = o.currency;
+  const tiles = [
+    ["Paying clients", o.paying, `${o.clients.length} total`],
+    ["Monthly recurring", money(o.mrr, cur), `${money(o.mrr * 12, cur)} a year`],
+    ["Collected", money(o.collected, cur), `${money(o.this_month, cur)} this month`],
+    ["Needs attention", o.attention, "not live, errors or failed payments"],
+  ];
+  view.innerHTML = `
+    <div class="head"><div><h1>Clients</h1><p>Businesses that paid. Their sites go live and they get a welcome email automatically.</p></div>
+      <button class="btn" id="chk" ${o.stripe ? "" : "hidden"}>Check for payments</button></div>
+    ${!o.stripe ? `<div class="banner"><div><b>Get paid automatically:</b> connect Stripe in <a href="#/settings">Settings</a>. Each business then gets its own payment link, and when they pay, their site goes live and the welcome email goes out without you doing anything. You can also mark payments by hand on a lead's page.</div></div>` : ""}
+    <div class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${tiles.map(([k, v, sub]) => `<div class="panel tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`).join("")}</div>
+    <div class="panel" style="overflow:auto">${o.clients.length ? `<table class="t"><thead><tr><th>Business</th><th>Billing</th><th>Website</th><th class="hide-sm">Paid</th><th class="hide-sm">Monthly</th><th></th></tr></thead><tbody>
+      ${o.clients.map((c) => `<tr class="click" data-id="${c.lead_id}"><td><div class="name">${h(c.name)}</div><div class="sub">${h(cat(c.category))}${c.city ? " · " + h(c.city) : ""}</div></td>
+        <td>${billPill(c.billing)}</td>
+        <td>${c.live_url ? `<a href="${h(c.live_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${h(c.live_url.replace(/^https?:\/\//, ""))} ↗</a>` : '<span class="muted">Not live yet</span>'}${c.last_error ? '<div class="sub" style="color:#b91c1c">Needs you — open</div>' : !c.welcome_sent_at && c.live_url ? '<div class="sub">Welcome email not sent</div>' : ""}</td>
+        <td class="hide-sm">${money(c.setup_paid, cur)}<div class="sub">${when(c.paid_at)}</div></td><td class="hide-sm">${money(c.monthly, cur)}</td><td class="muted">→</td></tr>`).join("")}
+      </tbody></table>` : `<div class="empty"><b>No clients yet</b>When a business pays, it appears here with its live website.</div>`}</div>`;
+  view.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => (location.hash = "#/leads/" + tr.dataset.id)));
+  const chk = $("#chk");
+  chk.addEventListener("click", () => guard(async () => {
+    chk.disabled = true; chk.innerHTML = '<span class="spin"></span> Checking';
+    try {
+      await api("/api/actions/sync", {});
+      let job; do { await new Promise((r) => setTimeout(r, 1000)); job = await api("/api/job"); } while (job.running);
+      job.error ? toast(job.error, true) : toast(job.log.split("\n").filter(Boolean).pop() || "Up to date");
+    } finally { refreshBadge(); clientsPage(); }
+  }));
 }
 
 // ---------- Mailbox ----------
@@ -526,7 +626,7 @@ const PRESETS = {
 };
 async function settingsPage() {
   setNav("settings");
-  const d = await api("/api/settings"), S = d.settings, E = d.email, N = d.netlify, A = d.ai;
+  const d = await api("/api/settings"), S = d.settings, E = d.email, N = d.netlify, A = d.ai, P = d.stripe;
   const steps = [["Your business", d.steps.business], ["Email account", d.steps.email], ["Website hosting", d.steps.hosting], ["Prices & limits", d.steps.prices]];
   const field = (sec, k, label, val, extra = "") => `<label class="f">${label}<input class="in" data-s="${sec}" data-k="${k}" value="${h(val ?? "")}" ${extra}></label>`;
   const isGmail = (E.smtp_host || "").includes("gmail");
@@ -579,8 +679,9 @@ async function settingsPage() {
 
       <div class="panel"><div class="ph"><h2>4. Prices & sending limits</h2></div><div class="pb">
         <div class="fields">
-          ${field("settings", "price_setup", "Setup price ($)", S.price_setup, 'type="number" min="0"')}
-          ${field("settings", "price_monthly", "Monthly price ($)", S.price_monthly, 'type="number" min="0"')}
+          ${field("settings", "price_setup", "Setup price", S.price_setup, 'type="number" min="0"')}
+          ${field("settings", "price_monthly", "Monthly price", S.price_monthly, 'type="number" min="0"')}
+          <label class="f">Currency<select class="in" data-s="settings" data-k="currency">${["usd", "gbp", "eur", "cad", "aud", "nzd"].map((c) => `<option value="${c}" ${S.currency === c ? "selected" : ""}>${c.toUpperCase()}</option>`).join("")}</select></label>
           ${field("settings", "daily_send_limit", "Max cold emails per day (start at 20–30)", S.daily_send_limit, 'type="number" min="1" max="500"')}
           ${field("settings", "followup_after_days", "Follow up after (days)", S.followup_after_days, 'type="number" min="1" max="60"')}
           <label class="f">Emails per business<select class="in" data-s="settings" data-k="max_emails_per_lead"><option value="2" ${S.max_emails_per_lead == 2 ? "selected" : ""}>2 (first email + one follow-up)</option><option value="1" ${S.max_emails_per_lead == 1 ? "selected" : ""}>1 (no follow-up)</option></select></label>
@@ -596,7 +697,7 @@ async function settingsPage() {
           </select></label>
         <div class="help">In automatic mode, only routine answers go out by themselves: questions about price, what's included, timing, domains, who you are, change requests, and "yes, let's go". Anything involving discounts, custom work, payments, calls, complaints or legal threats always waits for you, and nobody gets more than 3 automatic replies. Unsubscribes, out-of-office replies and "no thanks" are never answered.</div>
         <div class="fields">
-          ${field("settings", "payment_link", "Payment link for the setup fee (optional — e.g. a Stripe Payment Link)", S.payment_link, 'placeholder="https://buy.stripe.com/..."')}
+          ${P.link ? "" : field("settings", "payment_link", "Payment link (optional; connecting Stripe in step 6 does this for you)", S.payment_link, 'placeholder="https://buy.stripe.com/..."')}
           ${field("settings", "turnaround_days", "Days to get a site live", S.turnaround_days, 'type="number" min="1" max="60"')}
           <label class="f full">What's included (used in replies)<textarea class="in" data-s="settings" data-k="included" rows="4">${h(S.included)}</textarea></label>
           <label class="f full">Anything else the replies should know (optional)<textarea class="in" data-s="settings" data-k="reply_faq" rows="3" placeholder="e.g. Extra pages are $50 each. I also design logos for $99. I'm based in Bend and can meet in person.">${h(S.reply_faq)}</textarea></label>
@@ -611,6 +712,19 @@ async function settingsPage() {
         </div>
         <div class="row" style="justify-content:flex-end;margin-top:14px">${A.has_key ? '<button class="btn sm ghost" id="rmkey">Remove key</button>' : ""}<button class="btn" data-test="test-ai">Test AI reply</button><button class="btn primary" data-save="ai">Save</button></div>
         <div id="aitest"></div>
+      </div></div>
+
+      <div class="panel"><div class="ph"><h2>6. Getting paid (Stripe)</h2>${P.link ? `<span class="ok-line">✓ Connected${P.test_mode ? " (test mode)" : ""}</span>` : '<span class="muted small">Optional, but this is what makes it hands-off</span>'}</div><div class="pb">
+        <p class="muted" style="margin:0 0 12px">Once connected, every business gets its own payment link for the ${h(money(S.price_setup, S.currency))} setup + ${h(money(S.price_monthly, S.currency))}/month subscription. When someone pays, webbiz finds it on the next sync. It then publishes their finished website (no preview banner) and emails them the live link and next steps. If a card fails or they cancel, you get an email.</p>
+        <div class="help"><ol>
+          <li>Create a free account at <a href="https://dashboard.stripe.com/register" target="_blank" rel="noopener">stripe.com</a> and add your bank details so you can be paid.</li>
+          <li>Copy your <b>Secret key</b> from <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener">Developers → API keys</a>. Use the <code>sk_test_…</code> key first if you'd like to try it with test cards.</li>
+          <li>Paste it below and click <b>Connect Stripe</b>. If you change your prices later, a new link is made for you.</li></ol></div>
+        <div class="fields">
+          <label class="f full">Stripe secret key<input class="in" type="password" data-s="stripe" data-k="key" placeholder="${P.has_key ? "Saved — leave blank to keep" : "sk_live_... or sk_test_..."}" autocomplete="off"></label>
+          ${P.link ? `<label class="f full">Your payment link (each business gets a tagged copy)<input class="in" readonly value="${h(P.link)}"></label>` : ""}
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" id="connectstripe">${P.link ? "Reconnect" : "Connect"} Stripe</button></div>
       </div></div>
     </div>`;
 
@@ -638,6 +752,11 @@ async function settingsPage() {
   })));
   const rm = $("#rmkey");
   if (rm) rm.addEventListener("click", () => guard(async () => { await api("/api/settings", { ai: { remove_key: true } }); toast("API key removed"); settingsPage(); }));
+  $("#connectstripe").addEventListener("click", (e) => guard(async () => {
+    const b = e.target; b.disabled = true; b.innerHTML = '<span class="spin"></span> Connecting';
+    try { await save(["stripe", "settings"]); toast((await api("/api/settings/connect-stripe", {})).message); settingsPage(); }
+    finally { b.disabled = false; }
+  }));
   $("#connect").addEventListener("click", (e) => guard(async () => {
     const b = e.target; b.disabled = true; b.innerHTML = '<span class="spin"></span> Connecting';
     try {
@@ -660,6 +779,7 @@ async function route() {
     else if ((m = path.match(/^\/leads\/(\d+)$/))) await leadPage(+m[1]);
     else if ((m = path.match(/^\/mail\/(todo|inbox|sent|queued)$/))) await mailPage(m[1]);
     else if (path === "/sites") await sitesPage();
+    else if (path === "/clients") await clientsPage();
     else if (path === "/settings") await settingsPage();
     else location.hash = "#/";
   } catch (e) {

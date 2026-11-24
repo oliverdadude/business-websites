@@ -1,7 +1,7 @@
 """Sample data for trying the admin UI (`python -m webbiz admin --demo`). Uses its own database."""
 from datetime import timedelta
 
-from . import db, outreach, replies, sitegen
+from . import clients, db, outreach, replies, sitegen
 
 LEADS = [
     dict(name="Rosa's Bakery", email="rosa.bakery@example.com", category="shop=bakery", phone="+1 541 555 0100",
@@ -62,6 +62,17 @@ def seed(conn, cfg, sites_dir):
     got("Hartley & Co Accountants", "Who are you exactly, and how did you get our email?", 0, 1)
     sent("Riverside Dental", 1, 3)
     got("Riverside Dental", "Thank you for your email. I am out of the office until Monday.", 3, -1)
+    # Two paying clients: one fully set up, one whose welcome email still needs sending.
+    for name, days, domain, welcomed in (("Luna Hair Studio", 2, "lunahairstudio.com", True),
+                                         ("Iron Forge Gym", 0, "", False)):
+        lead_id = leads[name]["id"]
+        clients.record_payment(conn, cfg, lead_id, via="stripe" if domain else "manual")
+        slug = leads[name]["slug"]
+        conn.execute("UPDATE clients SET paid_at=?, went_live_at=?, welcome_sent_at=?, domain=?, live_url=?, "
+                     "stripe_subscription=?, last_error=? WHERE lead_id=?",
+                     (_ago(days), _ago(days), _ago(days) if welcomed else None, domain,
+                      f"https://{domain or slug + '.netlify.app'}", "sub_demo" if domain else "",
+                      "" if welcomed else "Welcome email: set up your email account in Settings first.", lead_id))
     conn.execute("UPDATE leads SET status='won' WHERE id=?", (leads["Luna Hair Studio"]["id"],))
     conn.execute("UPDATE messages SET is_read=1, reply_state='replied' WHERE lead_id=?",
                  (leads["Luna Hair Studio"]["id"],))
