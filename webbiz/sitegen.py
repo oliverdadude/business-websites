@@ -58,11 +58,15 @@ def _li(icon_name, label, value_html):
             f'<span><small>{label}</small>{value_html}</span></li>')
 
 
-def render(lead, cfg, final=False):
-    """Render a lead's site. final=True drops the "free preview" notice (for delivery)."""
+def render(lead, cfg, final=False, theme=None):
+    """Render a lead's site. final=True drops the "free preview" notice (for delivery).
+
+    theme: optional custom theme dict (same shape as themes.THEMES entries) for a hand-made demo.
+    Missing phone/email is fine: the page shows where they'll go instead of inventing them.
+    """
     e = lambda s: html.escape(str(s or ""), quote=True)
     lead = dict(lead)
-    theme = theme_for(lead.get("category"))
+    theme = dict(theme, kind=theme.get("kind", "trades")) if theme else theme_for(lead.get("category"))
     kind = theme["kind"]
     # accent_text: a readable-on-white shade for themes whose accent is light (yellow, lime).
     c = {"accent_text": theme["colors"]["accent"], **theme["colors"]}
@@ -73,17 +77,22 @@ def render(lead, cfg, final=False):
 
     phone = (lead.get("phone") or "").split(";")[0].strip()
     phone_digits = re.sub(r"[^\d+]", "", phone)
-    email = lead["email"]
+    email = (lead.get("email") or "").strip()
     address = (lead.get("address") or "").strip()
     if phone_digits:
         cta_href, cta, cta_short, cta_icon = f"tel:{phone_digits}", theme["cta"], "Call us", icon("phone", 18)
-    else:
+    elif email:
         cta_href, cta, cta_short, cta_icon = f"mailto:{email}", "Email us", "Email us", icon("mail", 18)
+    else:  # demo without contact details yet
+        cta_href, cta, cta_short, cta_icon = "#visit", theme["cta"], "Contact us", icon("phone", 18)
 
     contact = []
     if phone_digits:
         contact.append(_li("phone", "Phone", f'<a href="tel:{e(phone_digits)}">{e(phone)}</a>'))
-    contact.append(_li("mail", "Email", f'<a href="mailto:{e(email)}">{e(email)}</a>'))
+    if email:
+        contact.append(_li("mail", "Email", f'<a href="mailto:{e(email)}">{e(email)}</a>'))
+    if not (phone_digits or email):
+        contact.append(_li("phone", "Phone &amp; email", "<span>Your number and email go here</span>"))
     if address or city:
         contact.append(_li("map-pin", "Address", f'<a href="#visit">{e(address or city)}</a>'))
 
@@ -113,7 +122,9 @@ def render(lead, cfg, final=False):
                     f'<a href="https://www.openstreetmap.org/search?query={q}" target="_blank" rel="noopener">Open in maps →</a>'
                     f'</div></div>')
 
-    schema = {"@context": "https://schema.org", "@type": "LocalBusiness", "name": name, "email": email}
+    schema = {"@context": "https://schema.org", "@type": "LocalBusiness", "name": name}
+    if email:
+        schema["email"] = email
     if phone:
         schema["telephone"] = phone
     if address or city:
@@ -126,11 +137,12 @@ def render(lead, cfg, final=False):
         f"fill='{c['accent']}'/><text x='32' y='44' font-size='34' font-family='Arial' font-weight='700' "
         f"text-anchor='middle' fill='{c['on_accent']}'>{e(name[:1].upper())}</text></svg>")
 
-    studio = e(cfg["business_name"])
+    studio = e(cfg.get("business_name") or "")
+    reply_to = cfg.get("reply_to_email") or ""
     preview_bar = "" if final else (
-        f'<div class="preview-bar">Free website preview made for {e(name)} by {studio}. '
-        f'<a href="mailto:{e(cfg["reply_to_email"])}?subject={urllib.parse.quote("Website for " + name)}">'
-        f'Make it yours →</a></div>')
+        f'<div class="preview-bar">Free website preview made for {e(name)}{" by " + studio if studio else ""}. '
+        + (f'<a href="mailto:{e(reply_to)}?subject={urllib.parse.quote("Website for " + name)}">Make it yours →</a>'
+           if reply_to else "") + '</div>')
     services_title, services_intro = SERVICES_COPY[kind]
 
     return TEMPLATE.substitute(
@@ -164,7 +176,7 @@ def render(lead, cfg, final=False):
         hours_json=json.dumps([t for _, t in week]) if week else "null",
         map=map_html,
         footer_location=e(f" · {city}" if city else ""),
-        credit=f"Website by {studio}",
+        credit=f"Website by {studio}" if studio else "",
         **c,
     )
 
